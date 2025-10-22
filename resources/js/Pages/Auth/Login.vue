@@ -5,6 +5,7 @@ import InputLabel from '@/Components/InputLabel.vue'
 import PrimaryButton from '@/Components/PrimaryButton.vue'
 import { Link, usePage, useForm } from '@inertiajs/vue3'
 import Modal from '@/Components/Modal.vue'
+import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/solid'
 
 // Form state
 const identifier = ref('')
@@ -87,66 +88,34 @@ watch([identifier, password], () => {
                {{ form.errors.identifier }}
            </p>
 
-        <!-- Password -->
-          <div class="relative">
-            <InputLabel for="password" />
-            <input
-              v-model="form.password"
-              id="password"
-              :type="showPassword ? 'text' : 'password'"
-              placeholder="Password"
-              class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
-                    text-gray-800 placeholder-gray-500 focus:ring-2 
-                    focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
-            />
+    <!-- Password -->
+    <div class="relative">
+      <InputLabel for="password" />
+      <input
+        v-model="form.password"
+        id="password"
+        :type="showPassword ? 'text' : 'password'"
+        placeholder="Password"
+        class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
+              text-gray-800 placeholder-gray-500 focus:ring-2 
+              focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
+      />
 
-            <!-- Toggle Show/Hide Password -->
-            <button
-              type="button"
-              @click="showPassword = !showPassword"
-              class="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
-            >
-              <svg
-                v-if="!showPassword"
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                />
-              </svg>
+      <!-- Toggle Show/Hide Password (Heroicons) -->
+      <button
+        type="button"
+        @click="showPassword = !showPassword"
+        class="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+      >
+        <EyeIcon v-if="!showPassword" class="h-5 w-5" />
+        <EyeSlashIcon v-else class="h-5 w-5" />
+      </button>
+    </div>
 
-              <svg
-                v-else
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 012.183-3.362M6.228 6.228A9.972 9.972 0 0112 5c4.478 0 8.268 2.943 9.542 7a9.974 9.974 0 01-4.2 4.568M15 12a3 3 0 01-3 3m0-6a3 3 0 013 3m6 6L3 3"
-                />
-              </svg>
-            </button>
-          </div>
-           <p v-if="form.errors.password" class="text-red-600 text-sm text-left mt-1">
-            {{ form.errors.password }}
-           </p>
+    <p v-if="form.errors.password" class="text-red-600 text-sm text-left mt-1">
+      {{ form.errors.password }}
+    </p>
+
 
         <!-- Error Message -->
         <Transition name="fade">

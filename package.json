@@ -21,6 +21,7 @@
         "vue": "^3.4.0"
     },
     "dependencies": {
+        "@heroicons/vue": "^2.2.0",
         "vue3-lazyload": "^0.3.8"
     }
 }

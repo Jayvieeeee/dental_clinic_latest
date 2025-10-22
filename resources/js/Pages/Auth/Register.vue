@@ -4,6 +4,7 @@ import AuthBackgroundLayout from "@/Layouts/AuthBackroundLayout.vue"
 import InputLabel from '@/Components/InputLabel.vue'
 import PrimaryButton from '@/Components/PrimaryButton.vue'
 import { Link, useForm } from '@inertiajs/vue3'
+import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/solid'
 
 const form = useForm({
   username: '',
@@ -129,16 +130,19 @@ const handleRegister = () => {
             :type="showPassword ? 'text' : 'password'"
             placeholder="Password"
             class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
-                   text-gray-800 placeholder-gray-500 focus:ring-2 
-                   focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
+                  text-gray-800 placeholder-gray-500 focus:ring-2 
+                  focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
           />
+
           <button
             type="button"
-            class="absolute inset-y-0 right-4 flex items-center text-gray-500 hover:text-teal-600"
             @click="showPassword = !showPassword"
+            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-teal-600"
           >
-            <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+            <EyeIcon v-if="!showPassword" class="h-5 w-5" />
+            <EyeSlashIcon v-else class="h-5 w-5" />
           </button>
+
           <p v-if="form.errors.password" class="text-red-600 text-sm mt-1">
             {{ form.errors.password }}
           </p>
@@ -153,17 +157,20 @@ const handleRegister = () => {
             :type="showConfirmPassword ? 'text' : 'password'"
             placeholder="Confirm Password"
             class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
-                   text-gray-800 placeholder-gray-500 focus:ring-2 
-                   focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
+                  text-gray-800 placeholder-gray-500 focus:ring-2 
+                  focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
           />
+
           <button
             type="button"
-            class="absolute inset-y-0 right-4 flex items-center text-gray-500 hover:text-teal-600"
             @click="showConfirmPassword = !showConfirmPassword"
+            class="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-teal-600"
           >
-            <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+            <EyeIcon v-if="!showConfirmPassword" class="h-5 w-5" />
+            <EyeSlashIcon v-else class="h-5 w-5" />
           </button>
         </div>
+
 
         <!-- Sign Up Button -->
         <PrimaryButton

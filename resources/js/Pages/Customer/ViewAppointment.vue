@@ -143,11 +143,11 @@ const viewDetails = (appointmentId) => {
               <tr 
                 v-for="(appointment, index) in filteredAppointments" 
                 :key="appointment.id"
-                class="border-b border-teal-200 hover:bg-gray-50 transition-colors font-medium"
+                class="border-b-2 border-neutral hover:bg-gray-50 transition-colors font-medium"
               >
-                <td class="py-4 px-6 text-gray-800 border-r border-teal-200">{{ appointment.procedure }}</td>
-                <td class="py-4 px-6 text-gray-800 border-r border-teal-200">{{ appointment.date }} | {{ appointment.time }}</td>
-                <td class="py-4 px-6 font-semibold border-r border-teal-200" :class="getStatusColor(appointment.status)">
+                <td class="py-4 px-6 text-gray-800 border-r-2 border-neutral">{{ appointment.procedure }}</td>
+                <td class="py-4 px-6 text-gray-800 border-r-2 border-neutral">{{ appointment.date }} | {{ appointment.time }}</td>
+                <td class="py-4 px-6 font-semibold border-r-2 border-neutral" :class="getStatusColor(appointment.status)">
                   {{ appointment.status }}
                 </td>
                 <td class="py-4 px-6">

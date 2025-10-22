@@ -1,36 +1,39 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import EditModal from '@/Components/EditModal.vue'
 import { usePage } from '@inertiajs/vue3'
 
-const user = usePage().props.auth.user
+// Make user reactive using computed
+const page = usePage()
+const user = computed(() => page.props.auth.user ?? {})
 
 const showModal = ref(false)
 const modalTitle = ref('')
 const modalFields = ref([])
 const modalRoute = ref('profile.update')
 
-// Open modal when clicking ✎
+// Open modal
 const openModal = (fieldType) => {
   if (fieldType === 'name') {
     modalTitle.value = 'Update Name'
     modalFields.value = [
-      { label: 'First Name', name: 'first_name', value: user.first_name },
-      { label: 'Last Name', name: 'last_name', value: user.last_name },
+      { label: 'First Name', name: 'first_name', value: user.value.first_name },
+      { label: 'Last Name', name: 'last_name', value: user.value.last_name },
     ]
   } else if (fieldType === 'email') {
     modalTitle.value = 'Update Email'
     modalFields.value = [
-      { label: 'Email', name: 'email', value: user.email },
+      { label: 'Email', name: 'email', value: user.value.email },
     ]
   } else if (fieldType === 'contact') {
     modalTitle.value = 'Update Contact Number'
     modalFields.value = [
-      { label: 'Contact Number', name: 'contact_no', value: user.contact_no },
+      { label: 'Contact Number', name: 'contact_no', value: user.value.contact_no },
     ]
   }
   showModal.value = true
 }
+
 </script>
 
 <template>

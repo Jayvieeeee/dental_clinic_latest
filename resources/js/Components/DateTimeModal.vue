@@ -1,32 +1,60 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import axios from 'axios'
 
 const props = defineProps({
   modelValue: Boolean,
   selectedDate: String,
   selectedTime: String,
-  selectedTimeLabel: String
+  selectedTimeLabel: String,
+ selectedScheduleId: [String, Number]
 })
 
 const emits = defineEmits([
   "update:modelValue",
   "update:selectedDate",
-  "update:selectedTime",
-  "update:selectedTimeLabel"
+  "update:selectedTime", 
+  "update:selectedTimeLabel",
+  "update:selectedScheduleId", 
+  "datetime-selected"
 ])
 
 const localSelectedDate = ref(props.selectedDate)
-const localSelectedTime = ref(props.selectedTime)
 const errorMessage = ref("")
+const schedules = ref([])
+
+// Fetch schedule data from backend
+onMounted(async () => {
+  try {
+    const res = await axios.get('/customer/schedules')
+    schedules.value = res.data
+  } catch (error) {
+    console.error("Failed to load schedules:", error)
+  }
+})
 
 // Calendar state
 const currentMonth = ref(new Date().getMonth())
 const currentYear = ref(new Date().getFullYear())
-const timeSlots = [
-  { label: "10:00 am - 12:00 pm", value: "10:00:00" },
-  { label: "1:00 pm - 3:00 pm", value: "13:00:00" },
-  { label: "3:00 pm - 5:00 pm", value: "15:00:00" }
-]
+
+const timeSlots = computed(() => {
+  return schedules.value.map(slot => {
+    const start = formatTime(slot.start_time)
+    const end = formatTime(slot.end_time)
+    return {
+      label: `${start} - ${end}`,
+      value: slot.start_time,
+      scheduleId: slot.schedule_id // Make sure this matches your database column name
+    }
+  })
+})
+
+const formatTime = (time) => {
+  const [hour, minute] = time.split(":").map(Number)
+  const ampm = hour >= 12 ? "p.m" : "a.m"
+  const formattedHour = hour % 12 || 12
+  return `${formattedHour}:${String(minute).padStart(2, "0")} ${ampm}`
+}
 
 const monthNames = [
   "January","February","March","April","May","June",
@@ -48,19 +76,31 @@ const calendarDays = computed(() => {
   return days
 })
 
-const isUnavailable = (day) => {
-  if (!day) return false
-  const date = new Date(currentYear.value, currentMonth.value, day)
-  const weekday = date.getDay()
-  return weekday === 0 || weekday === 1
+// Determine status for each date
+const getDateStatus = (day) => {
+  if (!day) return { isPast: false, isClosed: false }
+
+  const dateObj = new Date(currentYear.value, currentMonth.value, day)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const isPast = dateObj < today
+  const formattedDate = dateObj.toISOString().split("T")[0]
+  const schedule = schedules.value.find(s => s.date === formattedDate)
+
+  // Determine closure based on DB schedule or fixed rule
+  const isClosed = schedule?.status === 'closed' || dateObj.getDay() === 0 || dateObj.getDay() === 1
+
+  return { isPast, isClosed }
 }
 
 const selectDate = (day) => {
-  if (!isUnavailable(day)) {
-    const formatted = `${currentYear.value}-${String(currentMonth.value + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    localSelectedDate.value = formatted
-    emits("update:selectedDate", formatted)
-  }
+  const { isPast, isClosed } = getDateStatus(day)
+  if (!day || isPast || isClosed) return
+
+  const formatted = `${currentYear.value}-${String(currentMonth.value + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  localSelectedDate.value = formatted
+  emits("update:selectedDate", formatted)
 }
 
 const nextMonth = () => {
@@ -80,7 +120,22 @@ const prevMonth = () => {
   }
 }
 
-// ✅ Validation before closing
+// Handle time selection
+const handleTimeSelect = (slot) => {
+  emits("update:selectedTime", slot.value)
+  emits("update:selectedTimeLabel", slot.label)
+  emits("update:selectedScheduleId", slot.scheduleId)
+  
+  // Also emit the custom event with all data
+  emits("datetime-selected", {
+    date: localSelectedDate.value,
+    time: slot.value,
+    timeLabel: slot.label,
+    scheduleId: slot.scheduleId
+  })
+}
+
+// Confirm before closing
 const confirmSelection = () => {
   if (!localSelectedDate.value) {
     errorMessage.value = "Please select a date."
@@ -91,7 +146,7 @@ const confirmSelection = () => {
     return
   }
 
-  errorMessage.value = "" // clear error
+  errorMessage.value = ""
   emits("update:modelValue", false)
 }
 </script>
@@ -99,70 +154,76 @@ const confirmSelection = () => {
 <template>
   <div v-if="modelValue" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
     <div class="bg-white p-6 rounded-xl shadow-lg w-[90%] md:w-[700px] relative">
-
       <!-- Close button -->
       <button @click="$emit('update:modelValue', false)" class="absolute top-3 right-5 text-2xl text-gray-600 hover:text-black">✕</button>
 
-      <h2 class="text-xl font-semibold mb-4 text-dark">Choose Available Slots</h2>
+      <h2 class="text-xl font-semibold mb-4 text-[#0E5C5C]">Choose Available Slots</h2>
       <p class="font-medium">Date</p>
 
       <div class="flex flex-col md:flex-row gap-10">
         <!-- Calendar -->
-        <div class="flex-1 p-2 border-2 rounded-xl border-black">
+        <div class="flex-1 p-3 border-2 rounded-xl border-gray-700">
+          <div class="flex items-center justify-between mb-4">
+            <span class="font-semibold">{{ monthNames[currentMonth] }} {{ currentYear }}</span>
 
-        <div class="flex items-center justify-between mb-4">
-        <span class="font-semibold">{{ monthNames[currentMonth] }} {{ currentYear }}</span>
+            <div class="flex items-center">
+              <button @click="prevMonth" class="p-1 hover:scale-105 transition-transform">
+                <img src="/icons/arrow_back.png" alt="Previous" class="w-4 h-4" />
+              </button>
+              <button @click="nextMonth" class="p-1 hover:scale-105 transition-transform">
+                <img src="/icons/arrow_forward.png" alt="Next" class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
-        <!-- Arrow Buttons Group -->
-        <div class="flex items-center space-x-0">
-            <button @click="prevMonth" class="p-1 hover:scale-105 transition-transform">
-            <img src="/icons/arrow_back.png" alt="Previous" class="w-4 h-4" />
-            </button>
-            <button @click="nextMonth" class="p-1 hover:scale-105 transition-transform -ml-1">
-            <img src="/icons/arrow_forward.png" alt="Next" class="w-4 h-4" />
-            </button>
-        </div>
-        </div>
-
-
+          <!-- Days header -->
           <div class="grid grid-cols-7 gap-2 mb-2 text-sm font-semibold">
             <div v-for="d in dayNames" :key="d" class="text-center">{{ d }}</div>
           </div>
 
+          <!-- Calendar Grid -->
           <div class="grid grid-cols-7 gap-2">
-            <div
-              v-for="(day, index) in calendarDays"
-              :key="index"
-              class="p-2 text-center rounded cursor-pointer"
-              :class="{
-                'bg-red-400 rounded-lg cursor-not-allowed': isUnavailable(day),
-                'bg-dark text-white': selectedDate?.endsWith(String(day).padStart(2, '0'))
-              }"
-              @click="selectDate(day)"
-            >
-              {{ day }}
-            </div>
+<!-- In your DateTimeModal template, fix this line: -->
+        <div
+          v-for="(day, index) in calendarDays"
+          :key="index"
+          class="p-2 text-center rounded cursor-pointer transition font-medium"
+          :class="{
+            'bg-gray-300 text-gray-500 cursor-not-allowed': getDateStatus(day).isPast,
+            'bg-red-400 text-white cursor-not-allowed': getDateStatus(day).isClosed,
+            'bg-[#0E5C5C] text-white': selectedDate && selectedDate.endsWith && selectedDate.endsWith(String(day).padStart(2, '0')),
+            'hover:bg-[#0E5C5C] hover:text-white': !getDateStatus(day).isPast && !getDateStatus(day).isClosed
+          }"
+          @click="selectDate(day)"
+        >
+          {{ day }}
+        </div>
           </div>
         </div>
 
-        <!-- Time -->
+        <!-- Time Slots -->
         <div class="flex-1">
           <h2 class="text-lg font-semibold mb-2">Time</h2>
-          <div class="flex flex-col space-y-4">
-            <label v-for="slot in timeSlots" :key="slot.value" class="flex items-center font-semibold space-x-3">
-            <input
-            type="radio"
-            class="w-5 h-5 accent-[#0E5C5C] focus:ring-0 cursor-pointer"
-            :value="slot.value"
-            :checked="slot.value === selectedTime"
-            @change="
-                $emit('update:selectedTime', slot.value);
-                $emit('update:selectedTimeLabel', slot.label)
-            "
-            />
 
+          <div v-if="timeSlots.length" class="flex flex-col space-y-4">
+            <label
+              v-for="slot in timeSlots"
+              :key="slot.value"
+              class="flex items-center font-semibold space-x-3"
+            >
+              <input
+                type="radio"
+                class="w-5 h-5 accent-[#0E5C5C] focus:ring-0 cursor-pointer"
+                :value="slot.value"
+                :checked="slot.value === selectedTime"
+                @change="handleTimeSelect(slot)"
+              />
               <span>{{ slot.label }}</span>
             </label>
+          </div>
+
+          <div v-else class="text-gray-400 text-sm mt-4">
+            No available time slots.
           </div>
         </div>
 
@@ -171,9 +232,12 @@ const confirmSelection = () => {
       <!-- Error Message -->
       <p v-if="errorMessage" class="text-red-600 font-medium mt-4">{{ errorMessage }}</p>
 
-      <!-- Confirm -->
+      <!-- Confirm Button -->
       <div class="mt-6 flex justify-end">
-        <button @click="confirmSelection" class="bg-neutral text-white px-6 py-2 rounded-full hover:bg-dark transition-colors">
+        <button
+          @click="confirmSelection"
+          class="bg-[#0E5C5C] text-white px-6 py-2 rounded-full hover:bg-[#084646] transition-colors"
+        >
           Confirm
         </button>
       </div>

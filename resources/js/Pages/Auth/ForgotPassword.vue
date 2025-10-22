@@ -5,6 +5,7 @@ import InputError from '@/Components/InputError.vue'
 import PrimaryButton from '@/Components/PrimaryButton.vue'
 import TextInput from '@/Components/TextInput.vue'
 import { Head, useForm, Link } from '@inertiajs/vue3'
+import { ref } from 'vue'
 
 defineProps({
   status: {
@@ -16,7 +17,16 @@ const form = useForm({
   email: '',
 })
 
+const showEmptyError = ref(false)
+
 const submit = () => {
+  // Check if email is empty
+  if (form.email.trim() === '') {
+    showEmptyError.value = true
+    return
+  }
+  
+  showEmptyError.value = false
   form.post(route('password.email'))
 }
 </script>
@@ -52,13 +62,18 @@ const submit = () => {
             type="email"
             placeholder="Email"
             v-model="form.email"
-            required
             autofocus
             autocomplete="username"
             class="w-full px-5 py-3.5 rounded-xl border-0 bg-white/90 
                    text-gray-800 placeholder-gray-500 focus:ring-2 
                    focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
+            :class="{ 'border-2 border-red-500': showEmptyError }"
           />
+
+          <!-- Show error message when email is empty -->
+          <div v-if="showEmptyError" class="mt-2 text-red-500 text-sm text-left">
+            Please enter your email address.
+          </div>
 
           <InputError class="mt-2 text-red-500 text-sm" :message="form.errors.email" />
         </div>

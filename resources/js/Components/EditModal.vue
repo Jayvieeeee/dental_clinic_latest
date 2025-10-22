@@ -1,5 +1,5 @@
 <script setup>
-import { watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useForm } from '@inertiajs/vue3'
 import PrimaryButton from '@/Components/PrimaryButton.vue'
 import InputLabel from '@/Components/InputLabel.vue'
@@ -13,45 +13,98 @@ const props = defineProps({
   routeName: String,
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'success'])
 
-// Create initial data object from fields
-const getInitialData = () => {
-  const data = {}
-  props.fields.forEach(field => {
-    data[field.name] = field.value || ''
-  })
-  return data
-}
+// Reactive form object, recreated every time modal opens
+let form = useForm({})
 
-const form = useForm(getInitialData())
+// Local validation errors
+const validationErrors = ref({})
 
-// Update form when fields change
+// Original field values for change detection
+const originalValues = ref({})
+
+// Watch for fields change and create a new form
 watch(
   () => props.fields,
   (newFields) => {
-    if (newFields && newFields.length) {
-      newFields.forEach((f) => {
-        form[f.name] = f.value || ''
-      })
-    }
+    if (!newFields || !newFields.length) return
+
+    const initialData = {}
+    originalValues.value = {}
+    
+    newFields.forEach(f => {
+      initialData[f.name] = f.value || ''
+      originalValues.value[f.name] = f.value || ''
+    })
+
+    form = useForm(initialData)
+    // Clear validation errors when fields change
+    validationErrors.value = {}
   },
   { immediate: true }
 )
 
+// Check if data has changed
+const hasChanges = computed(() => {
+  return props.fields.some(field => {
+    const currentValue = form[field.name]?.toString().trim()
+    const originalValue = originalValues.value[field.name]?.toString().trim()
+    return currentValue !== originalValue
+  })
+})
+
+// Basic client-side validation
+const validateForm = () => {
+  validationErrors.value = {}
+  let isValid = true
+
+  // Check if any changes were made
+  if (!hasChanges.value) {
+    validationErrors.value.general = 'No changes were made'
+    return false
+  }
+
+  props.fields.forEach(field => {
+    const value = form[field.name]?.toString().trim()
+    
+    // Check if field is empty
+    if (!value || value === '') {
+      validationErrors.value[field.name] = `${field.label} is required`
+      isValid = false
+    }
+  })
+
+  return isValid
+}
+
 const submit = () => {
-  console.log('Submitting form data:', form.data())
+  // Validate before submitting
+  if (!validateForm()) {
+    return
+  }
 
   form.patch(route(props.routeName), {
     preserveScroll: true,
     onSuccess: () => {
       emit('close')
+      emit('success')
       form.reset()
+      validationErrors.value = {}
     },
     onError: (errors) => {
-      console.error('Validation errors:', errors)
+      if (errors.email) {
+        validationErrors.value.email = errors.email
+      }
     },
   })
+}
+
+// Close modal and reset errors
+const closeModal = () => {
+  emit('close')
+  validationErrors.value = {}
+  form.clearErrors()
 }
 </script>
 
@@ -65,7 +118,7 @@ const submit = () => {
     >
       <!-- Close Button -->
       <button
-        @click="emit('close')"
+        @click="closeModal"
         class="absolute top-3 right-3 text-gray-500 hover:text-gray-700 text-lg"
       >
         ✕
@@ -78,23 +131,54 @@ const submit = () => {
 
       <!-- Form -->
       <form @submit.prevent="submit" class="space-y-4">
+        <!-- General Error -->
+        <div v-if="validationErrors.general" class="bg-red-50 border border-red-200 rounded-lg p-3">
+          <p class="text-red-600 text-sm text-center">{{ validationErrors.general }}</p>
+        </div>
+
         <div v-for="(field, index) in fields" :key="index">
           <InputLabel :for="field.name" :value="field.label" />
           <TextInput
             :id="field.name"
             v-model="form[field.name]"
             class="w-full rounded-xl border-gray-300"
-            type="text"
+            :class="{ 
+              'border-red-500': validationErrors[field.name] || form.errors[field.name],
+              'border-green-500': hasChanges && form[field.name]?.toString().trim() !== originalValues[field.name]?.toString().trim()
+            }"
+            :type="field.name === 'email' ? 'email' : 'text'"
+            @input="() => {
+              // Clear validation error when user starts typing
+              if (validationErrors[field.name]) {
+                validationErrors[field.name] = ''
+              }
+              // Clear form errors when user types
+              if (form.errors[field.name]) {
+                form.clearErrors(field.name)
+              }
+            }"
           />
-          <InputError :message="form.errors[field.name]" class="mt-2" />
+          <!-- Show validation errors -->
+          <InputError 
+            v-if="validationErrors[field.name]" 
+            :message="validationErrors[field.name]" 
+            class="mt-2" 
+          />
+          <!-- Show server-side errors -->
+          <InputError 
+            v-else-if="form.errors[field.name]" 
+            :message="form.errors[field.name]" 
+            class="mt-2" 
+          />
         </div>
 
         <div class="flex justify-center mt-6">
           <PrimaryButton
-            :disabled="form.processing"
-            class="bg-dark hover:bg-light text-white px-8 py-1.5 rounded-full"
+            :disabled="form.processing || !hasChanges"
+            class="bg-dark hover:bg-light text-white px-8 py-1.5 rounded-full transition-colors"
+            :class="{ 'opacity-50 cursor-not-allowed': !hasChanges }"
           >
-            Save
+            {{ form.processing ? 'Saving...' : 'Save' }}
           </PrimaryButton>
         </div>
       </form>

@@ -15,21 +15,40 @@ class ProfileUpdateRequest extends FormRequest
      */
     public function rules(): array
     {
+        $user = $this->user();
+
         return [
-            'first_name' => ['sometimes', 'string', 'max:100'],
-            'last_name' => ['sometimes', 'string', 'max:100'],
+            'first_name' => ['required', 'string', 'max:255'],
+            'last_name' => ['required', 'string', 'max:255'],
             'email' => [
-                'sometimes',
+                'required',
                 'string',
-                'lowercase',
-                'email',
-                'max:100',
+                'max:255',
                 Rule::unique(User::class, 'email')->ignore($this->user()->user_id, 'user_id'),
+                function ($attribute, $value, $fail) {
+                    if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                        $fail('The email must be a valid email address.');
+                    }
+
+                    $parts = explode('@', $value);
+                    if (count($parts) !== 2 || !str_contains($parts[1], '.')) {
+                        $fail('The email must be a complete email address with domain (e.g., example@gmail.com).');
+                    }
+                }
             ],
-            'contact_no' => [
-                'nullable',
-                'regex:/^(09|\+639)\d{9}$/',
-            ],
+            'contact_no' => ['required', 'string', 'max:20'],
         ];
     }
+
+    public function messages(): array
+    {
+        return [
+            'first_name.required' => 'First name is required.',
+            'last_name.required' => 'Last name is required.',
+            'email.required' => 'Email address is required.',
+            'email.unique' => 'This email address is already taken.',
+            'contact_no.required' => 'Contact number is required.',
+        ];
+    }
+
 }

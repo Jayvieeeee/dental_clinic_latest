@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -30,11 +31,24 @@ class AuthenticatedSessionController extends Controller
     public function store(LoginRequest $request): RedirectResponse
     {
         $request->authenticate();
-
         $request->session()->regenerate();
+
+        $user = Auth::user();
+
+        if (!$user) {
+            return redirect()->route('login')->withErrors(['identifier' => 'Login failed.']);
+        }
+
+        // Redirect based on role
+        if ($user->role === 'admin') {
+            return redirect()->intended(route('admin.dashboard', absolute: false));
+        }
+
+        Log::info('Logged in user role: ' . $user->role);
 
         return redirect()->intended(route('customer.home', absolute: false));
     }
+
 
     /**
      * Destroy an authenticated session.

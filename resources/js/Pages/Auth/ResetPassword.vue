@@ -5,6 +5,8 @@ import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, useForm } from '@inertiajs/vue3';
+import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/solid'
+import { ref } from 'vue';
 
 const props = defineProps({
     email: {
@@ -23,6 +25,10 @@ const form = useForm({
     password: '',
     password_confirmation: '',
 });
+
+// State for showing/hiding passwords
+const showPassword = ref(false);
+const showConfirmPassword = ref(false);
 
 const submit = () => {
     form.post(route('password.store'), {
@@ -65,38 +71,58 @@ const submit = () => {
                     <InputError class="mt-2 text-red-500 text-sm" :message="form.errors.email" />
                 </div>
 
-                <div>
+                <div class="relative">
                     <InputLabel for="password" />
 
                     <TextInput
                         id="password"
-                        type="password"
+                        :type="showPassword ? 'text' : 'password'"
                         placeholder="Password"
                         v-model="form.password"
                         required
                         autocomplete="new-password"
-                        class="w-full px-5 py-3.5 rounded-xl border-0 bg-white/90 
+                        class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
                                text-gray-800 placeholder-gray-500 focus:ring-2 
                                focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
                     />
+
+                    <!-- Toggle Show/Hide Password - Properly centered -->
+                    <button
+                        type="button"
+                        @click="showPassword = !showPassword"
+                        class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                    >
+                        <EyeIcon v-if="!showPassword" class="h-5 w-5" />
+                        <EyeSlashIcon v-else class="h-5 w-5" />
+                    </button>
 
                     <InputError class="mt-2 text-red-500 text-sm" :message="form.errors.password" />
                 </div>
 
-                <div>
+                <div class="relative">
                     <InputLabel for="password_confirmation" />
 
                     <TextInput
                         id="password_confirmation"
-                        type="password"
+                        :type="showConfirmPassword ? 'text' : 'password'"
                         placeholder="Confirm Password"
                         v-model="form.password_confirmation"
                         required
                         autocomplete="new-password"
-                        class="w-full px-5 py-3.5 rounded-xl border-0 bg-white/90 
+                        class="w-full px-5 py-3.5 pr-12 rounded-xl border-0 bg-white/90 
                                text-gray-800 placeholder-gray-500 focus:ring-2 
                                focus:ring-teal-500 focus:outline-none transition-all shadow-sm"
                     />
+
+                    <!-- Toggle Show/Hide Confirm Password - Properly centered -->
+                    <button
+                        type="button"
+                        @click="showConfirmPassword = !showConfirmPassword"
+                        class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                    >
+                        <EyeIcon v-if="!showConfirmPassword" class="h-5 w-5" />
+                        <EyeSlashIcon v-else class="h-5 w-5" />
+                    </button>
 
                     <InputError class="mt-2 text-red-500 text-sm" :message="form.errors.password_confirmation" />
                 </div>

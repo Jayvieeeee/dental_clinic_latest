@@ -28,36 +28,29 @@ class ProfileController extends Controller
     /**
      * Update the user's profile information.
      */
-public function update(ProfileUpdateRequest $request): RedirectResponse
-{
-    Log::info('Profile update called', [
-        'user' => $request->user(),
-        'data' => $request->all(),
-    ]);
+    public function update(ProfileUpdateRequest $request): RedirectResponse
+    {
 
-    $user = $request->user();
+        $user = $request->user();
 
-    if (!$user) {
-        Log::error('No authenticated user found during profile update.');
-        abort(401, 'Not authenticated');
+        if (!$user) {
+            Log::error('No authenticated user found during profile update.');
+            abort(401, 'Not authenticated');
+        }
+
+        $data = array_filter($request->only([
+            'first_name',
+            'last_name',
+            'email',
+            'contact_no',
+        ]), fn($value) => !is_null($value) && $value !== '');
+
+        $user->fill($data);
+        $user->save();
+
+        return Redirect::route('profile.edit')->with('status', 'profile-updated');
     }
 
-    $data = array_filter($request->only([
-        'first_name',
-        'last_name',
-        'email',
-        'contact_no',
-    ]), fn($value) => !is_null($value) && $value !== '');
-
-    $user->fill($data);
-    $user->save();
-
-    Log::info('User after save', ['user' => $user]);
-
-    return Redirect::route('profile.edit')->with('status', 'profile-updated');
-}
-
-    
     /**
      * Delete the user's account.
      */
