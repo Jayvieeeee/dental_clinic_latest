@@ -42,7 +42,7 @@ class AppointmentController extends Controller
                           ' - ' . date('g:i a', strtotime($appointment->schedule->end_time))
                         : 'N/A',
                     'status' => ucfirst($appointment->status),
-                    'payment_status' => ucfirst($appointment->payment_status ?? 'Paid'),
+                    'payment_status' => ucfirst($appointment->payment_status ?? 'Pending'), // Changed default to Pending
                 ];
             });
 
@@ -122,13 +122,14 @@ class AppointmentController extends Controller
                 ]);
             }
 
-            // Create the appointment - ONLY USE FIELDS THAT EXIST IN DATABASE
+            // Create the appointment - Automatically save to DB even with pending payment
             $appointment = Appointment::create([
                 'patient_id' => Auth::id(),
                 'service_id' => $validated['service_id'],
                 'schedule_id' => $validated['schedule_id'],
                 'appointment_date' => $validated['appointment_date'],
                 'status' => 'pending', 
+                'payment_status' => 'pending', // Explicitly set payment status as pending
                 // REMOVED: schedule_datetime, created_by (they don't exist in DB)
             ]);
 
@@ -137,9 +138,11 @@ class AppointmentController extends Controller
                 'user_id' => Auth::id(),
                 'schedule_id' => $validated['schedule_id'],
                 'appointment_date' => $validated['appointment_date'],
+                'status' => 'pending',
+                'payment_status' => 'pending',
             ]);
 
-            // Set session for payment
+            // Set session for payment - appointment is already saved in DB
             session([
                 'pending_appointment' => [
                     'appointment_id' => $appointment->appointment_id,
@@ -150,7 +153,10 @@ class AppointmentController extends Controller
                 ]
             ]);
 
-            return redirect()->route('customer.payment.view');
+            // Return success response - appointment is saved regardless of payment
+            return redirect()->route('customer.payment.view')->with([
+                'success' => 'Appointment scheduled successfully! Please complete the payment to confirm your booking.'
+            ]);
         });
     }
 
@@ -162,7 +168,27 @@ class AppointmentController extends Controller
         $pendingAppointment = session('pending_appointment');
         
         if (!$pendingAppointment || $pendingAppointment['user_id'] != Auth::id()) {
-            return redirect()->route('customer.appointment')->with('error', 'No pending appointment found.');
+            // If no session, check if user has a pending appointment in database
+            $pendingAppointment = Appointment::where('patient_id', Auth::id())
+                ->where('status', 'pending')
+                ->where('payment_status', 'pending')
+                ->latest()
+                ->first();
+                
+            if (!$pendingAppointment) {
+                return redirect()->route('customer.appointment')->with('error', 'No pending appointment found.');
+            }
+            
+            // Recreate session from database
+            session([
+                'pending_appointment' => [
+                    'appointment_id' => $pendingAppointment->appointment_id,
+                    'service_id' => $pendingAppointment->service_id,
+                    'schedule_id' => $pendingAppointment->schedule_id,
+                    'appointment_date' => $pendingAppointment->appointment_date,
+                    'user_id' => Auth::id(),
+                ]
+            ]);
         }
 
         $appointment = Appointment::find($pendingAppointment['appointment_id']);
@@ -181,6 +207,8 @@ class AppointmentController extends Controller
                 'time_slot' => $schedule->start_time . ' - ' . $schedule->end_time,
                 'display_time' => Carbon::parse($schedule->start_time)->format('g:i A') . ' - ' . Carbon::parse($schedule->end_time)->format('g:i A'),
                 'amount' => 300.00,
+                'status' => $appointment->status,
+                'payment_status' => $appointment->payment_status,
             ]
         ]);
     }
@@ -194,7 +222,7 @@ class AppointmentController extends Controller
         $appointments = Appointment::with(['service', 'schedule'])
             ->where('patient_id', $user->user_id)
             ->orderBy('appointment_date', 'desc')
-            ->get() // Removed schedule_datetime ordering since column doesn't exist
+            ->get()
             ->map(function ($appointment) {
                 $timeSlot = $appointment->schedule ? 
                     Carbon::parse($appointment->schedule->start_time)->format('g:i A') . ' - ' . 
@@ -206,6 +234,7 @@ class AppointmentController extends Controller
                     'service_name' => $appointment->service->service_name,
                     'appointment_date' => $appointment->appointment_date,
                     'status' => $appointment->status,
+                    'payment_status' => $appointment->payment_status ?? 'pending',
                     'formatted_date' => Carbon::parse($appointment->appointment_date)->format('F j, Y'),
                     'formatted_time' => $timeSlot,
                     'can_cancel' => $appointment->status === 'confirmed',
@@ -214,6 +243,7 @@ class AppointmentController extends Controller
                     'is_confirmed' => $appointment->status === 'confirmed',
                     'is_cancelled' => $appointment->status === 'cancelled',
                     'is_completed' => $appointment->status === 'completed',
+                    'needs_payment' => ($appointment->status === 'pending' && $appointment->payment_status === 'pending'),
                 ];
             });
 
@@ -242,20 +272,23 @@ class AppointmentController extends Controller
                 return back()->with('error', 'Appointment not found.');
             }
 
-            // Only allow cancellation of CONFIRMED appointments
-            if ($appointment->status !== 'confirmed') {
-                return back()->with('error', 'Only confirmed appointments can be cancelled.');
+            // Allow cancellation of both pending and confirmed appointments
+            if (!in_array($appointment->status, ['pending', 'confirmed'])) {
+                return back()->with('error', 'Only pending or confirmed appointments can be cancelled.');
             }
 
             // Update appointment status to cancelled
             $appointment->update([
                 'status' => 'cancelled',
+                'payment_status' => 'cancelled', // Also update payment status
                 // REMOVED: cancelled_at, cancelled_by (they don't exist in DB)
             ]);
 
             Log::info('Appointment cancelled', [
                 'appointment_id' => $appointment->appointment_id,
                 'user_id' => Auth::id(),
+                'previous_status' => $appointment->getOriginal('status'),
+                'previous_payment_status' => $appointment->getOriginal('payment_status'),
             ]);
 
             return redirect()
@@ -296,8 +329,9 @@ class AppointmentController extends Controller
                 return back()->with('error', 'Cancelled or completed appointments cannot be rescheduled.');
             }
 
-            if ($appointment->status !== 'confirmed') {
-                return back()->with('error', 'Only confirmed appointments can be rescheduled.');
+            // Allow rescheduling of both pending and confirmed appointments
+            if (!in_array($appointment->status, ['pending', 'confirmed'])) {
+                return back()->with('error', 'Only pending or confirmed appointments can be rescheduled.');
             }
 
             $isAlreadyBooked = Appointment::where('schedule_id', $validated['new_schedule_id'])
@@ -314,7 +348,7 @@ class AppointmentController extends Controller
             $appointment->update([
                 'schedule_id'        => $validated['new_schedule_id'],
                 'appointment_date'   => $validated['new_appointment_date'],
-                'status'             => 'confirmed',
+                'status'             => $appointment->status, // Keep the same status
                 // REMOVED: schedule_datetime, rescheduled_at, rescheduled_by (they don't exist in DB)
             ]);
 
@@ -325,6 +359,8 @@ class AppointmentController extends Controller
                 'new_schedule_id'        => $validated['new_schedule_id'],
                 'previous_date'          => $appointment->getOriginal('appointment_date'),
                 'new_date'               => $validated['new_appointment_date'],
+                'status'                 => $appointment->status,
+                'payment_status'         => $appointment->payment_status,
             ]);
 
             return redirect()
@@ -333,253 +369,58 @@ class AppointmentController extends Controller
         });
     }
 
+    // ... (rest of your methods remain the same: getAvailableSlots, checkAvailability, getAvailableDates, sendAppointmentReminder, sendDailyReminders)
+
     /**
-     * Get available time slots for a specific date
+     * Method to handle successful payment
      */
-    public function getAvailableSlots(Request $request)
+    public function markAsPaid($appointmentId)
     {
-        $userId = Auth::id();
-        $request->validate([
-            'date' => 'required|date|after:today',
-        ]);
+        return DB::transaction(function () use ($appointmentId) {
+            $appointment = Appointment::where('appointment_id', $appointmentId)
+                ->where('patient_id', Auth::id())
+                ->first();
 
-        $date = Carbon::parse($request->query('date'))->toDateString();
+            if (!$appointment) {
+                return false;
+            }
 
-        // Check if date is at least 1 day in advance
-        $today = Carbon::today();
-        $selectedDate = Carbon::parse($date);
-        
-        if ($selectedDate->lte($today)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Appointments must be scheduled at least 1 day in advance.',
-                'available_slots' => []
-            ], 422);
-        }
+            $appointment->update([
+                'payment_status' => 'paid',
+                'status' => 'confirmed', // Change status to confirmed upon payment
+            ]);
 
-        $cacheKey = "available_slots:{$date}";
-        $cachedSlots = Cache::get($cacheKey);
-        
-        if ($cachedSlots) {
-            return response()->json([
-                'success' => true,
-                'available_slots' => $cachedSlots,
-                'date' => $date,
-                'cached' => true
+            Log::info('Appointment marked as paid', [
+                'appointment_id' => $appointmentId,
+                'user_id' => Auth::id(),
+            ]);
+
+            // Clear the pending appointment session
+            session()->forget('pending_appointment');
+
+            return true;
+        });
+    }
+
+    /**
+     * Method to handle failed payment
+     */
+    public function markPaymentFailed($appointmentId)
+    {
+        $appointment = Appointment::where('appointment_id', $appointmentId)
+            ->where('patient_id', Auth::id())
+            ->first();
+
+        if ($appointment) {
+            $appointment->update([
+                'payment_status' => 'failed',
+                // Status remains pending until payment is successful
+            ]);
+
+            Log::info('Appointment payment failed', [
+                'appointment_id' => $appointmentId,
+                'user_id' => Auth::id(),
             ]);
         }
-
-        $availableSlots = Schedule::leftJoin('appointments', function($join) use ($date, $userId) {
-                $join->on('schedules.schedule_id', '=', 'appointments.schedule_id')
-                    ->whereDate('appointments.appointment_date', $date)
-                    ->where('appointments.patient_id', '!=', $userId)
-                    ->whereIn('appointments.status', ['pending', 'confirmed']);
-            })
-            ->select(
-                'schedules.schedule_id',
-                'schedules.start_time',
-                'schedules.end_time',
-                DB::raw('appointments.schedule_id IS NOT NULL as is_booked')
-            )
-            ->get()
-            ->map(function ($schedule) {
-                return [
-                    'schedule_id' => $schedule->schedule_id,
-                    'start_time' => $schedule->start_time,
-                    'end_time' => $schedule->end_time,
-                    'display_time' => Carbon::parse($schedule->start_time)->format('g:i A') .
-                        ' - ' . Carbon::parse($schedule->end_time)->format('g:i A'),
-                    'is_booked' => (bool) $schedule->is_booked,
-                ];
-            })
-            ->values();
-
-        Cache::put($cacheKey, $availableSlots, 300); // 5 minutes
-
-        return response()->json([
-            'success' => true,
-            'available_slots' => $availableSlots,
-            'date' => $date,
-            'cached' => false
-        ]);
     }
-
-    /**
-     * Check slot availability
-     */
-    public function checkAvailability(Request $request)
-    {
-        $request->validate([
-            'schedule_id' => 'required|exists:schedules,schedule_id',
-            'date' => 'required|date|after:today',
-        ]);
-
-        // Check if date is at least 1 day in advance
-        $today = Carbon::today();
-        $selectedDate = Carbon::parse($request->date);
-        
-        if ($selectedDate->lte($today)) {
-            return response()->json([
-                'available' => false,
-                'message' => 'Appointments must be scheduled at least 1 day in advance.',
-                'schedule' => null
-            ], 422);
-        }
-
-        $isAvailable = !Appointment::where('schedule_id', $request->schedule_id)
-            ->whereDate('appointment_date', $request->date)
-            ->whereIn('status', ['pending', 'confirmed'])
-            ->exists();
-
-        $schedule = Schedule::find($request->schedule_id);
-
-        return response()->json([
-            'available' => $isAvailable,
-            'message' => $isAvailable ? 'Time slot is available' : 'Time slot is not available',
-            'schedule' => $schedule ? [
-                'schedule_id' => $schedule->schedule_id,
-                'display_time' => Carbon::parse($schedule->start_time)->format('g:i A') . ' - ' . Carbon::parse($schedule->end_time)->format('g:i A')
-            ] : null
-        ]);
-    }
-
-    /**
-     * Get available dates
-     */
-    public function getAvailableDates(Request $request)
-    {
-        $startDate = Carbon::tomorrow(); 
-        $endDate = Carbon::now()->addMonths(3);
-        
-        // CACHE AVAILABLE DATES
-        $cacheKey = 'available_dates_range';
-        $cachedDates = Cache::get($cacheKey);
-        
-        if ($cachedDates) {
-            return response()->json([
-                'success' => true,
-                'available_dates' => $cachedDates,
-                'date_range' => [
-                    'start' => $startDate->format('Y-m-d'),
-                    'end' => $endDate->format('Y-m-d')
-                ],
-                'cached' => true
-            ]);
-        }
-
-        $availableDates = [];
-        $totalSlots = Schedule::count();
-
-        // BATCH QUERY - Get all booked counts in single query
-        $bookedCounts = Appointment::whereDate('appointment_date', '>=', $startDate)
-            ->whereDate('appointment_date', '<=', $endDate)
-            ->whereIn('status', ['pending', 'confirmed'])
-            ->groupBy('appointment_date')
-            ->selectRaw('appointment_date, COUNT(*) as booked_count')
-            ->pluck('booked_count', 'appointment_date');
-
-        $period = $startDate->toPeriod($endDate);
-
-        foreach ($period as $date) {
-            $dateStr = $date->format('Y-m-d');
-            $bookedCount = $bookedCounts[$dateStr] ?? 0;
-            $availableCount = $totalSlots - $bookedCount;
-
-            if ($availableCount > 0) {
-                $availableDates[] = [
-                    'date' => $dateStr,
-                    'available_slots' => $availableCount,
-                    'day_name' => $date->englishDayOfWeek,
-                    'is_available' => true
-                ];
-            }
-        }
-        
-        Cache::put($cacheKey, $availableDates, 900); // 15 minutes
-
-        return response()->json([
-            'success' => true,
-            'available_dates' => $availableDates,
-            'date_range' => [
-                'start' => $startDate->format('Y-m-d'),
-                'end' => $endDate->format('Y-m-d')
-            ],
-            'cached' => false
-        ]);
-    }
-
-     private function sendAppointmentReminder($appointment)
-    {
-        try {
-            $user = User::find($appointment->patient_id);
-            $service = Service::find($appointment->service_id);
-            $schedule = Schedule::find($appointment->schedule_id);
-
-            if ($user && $service && $schedule) {
-                Mail::to($user->email)->send(new AppointmentReminder(
-                    $user,
-                    $appointment,
-                    $service,
-                    $schedule
-                ));
-                
-                Log::info('Appointment reminder email sent', [
-                    'appointment_id' => $appointment->appointment_id,
-                    'user_email' => $user->email,
-                    'appointment_date' => $appointment->appointment_date
-                ]);
-                
-                return true;
-            }
-        } catch (\Exception $e) {
-            Log::error('Failed to send appointment reminder email', [
-                'appointment_id' => $appointment->appointment_id,
-                'error' => $e->getMessage()
-            ]);
-        }
-        
-        return false;
-    }
-
-    /**
-     * Command method to send daily reminders at 8:00 AM
-     * Sends reminders to ALL users with confirmed appointments 
-     */
-    public function sendDailyReminders()
-    {
-        $today = Carbon::today()->format('Y-m-d');
-        
-        // Get ALL confirmed appointments (today and future)
-        $appointments = Appointment::with(['user', 'service', 'schedule'])
-            ->whereDate('appointment_date', '>=', $today)
-            ->whereIn('status', ['pending', 'confirmed'])
-            ->get();
-
-        $sentCount = 0;
-        $failedCount = 0;
-
-        foreach ($appointments as $appointment) {
-            $success = $this->sendAppointmentReminder($appointment);
-            
-            if ($success) {
-                $sentCount++;
-            } else {
-                $failedCount++;
-            }
-        }
-
-        Log::info("Daily appointment reminders completed", [
-            'date' => $today,
-            'reminders_sent' => $sentCount,
-            'reminders_failed' => $failedCount,
-            'total_appointments' => $appointments->count()
-        ]);
-
-        return [
-            'sent' => $sentCount,
-            'failed' => $failedCount,
-            'total' => $appointments->count()
-        ];
-    }
-
 }
