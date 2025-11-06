@@ -19,24 +19,6 @@ use Inertia\Inertia;
 
 class PaymongoController extends Controller
 {
-    /**
-     * All Available Payments
-     */
-    public function getAvailablePaymentMethods()
-    {
-        try {
-            $paymongo_SecretKey = env('PAYMONGO_SECRET_KEY');
-            $response = Http::withBasicAuth($paymongo_SecretKey, '')->get('https://api.paymongo.com/v1/merchants/capabilities/payment_methods');
-            
-            $data = $response->json();
-            
-            return $data;
-        } catch (\Exception $e) {
-            Log::error('Failed to fetch payment methods', ['error' => $e->getMessage()]);
-            return [];
-        }
-    }
-
     public function createPayment(Request $request)
     {
         Log::info('Payment creation started', [
@@ -44,9 +26,8 @@ class PaymongoController extends Controller
             'request_data' => $request->all()
         ]);
 
-        // Fix: Convert amount properly to centavos
         $amountInPesos = 300.00;
-        $amount = intval(round($amountInPesos * 100)); // 30000 centavos
+        $amount = intval(round($amountInPesos * 100));
 
         $paymongo_SecretKey = env('PAYMONGO_SECRET_KEY');
 
@@ -107,14 +88,12 @@ class PaymongoController extends Controller
 
             Log::info('Appointment created', ['appointment_id' => $appointment->appointment_id]);
 
-            // Create PayMongo checkout session - FIXED PAYLOAD
             $paymentMethods = ['gcash', 'grab_pay', 'paymaya', 'card'];
             
-            // FIX: Use absolute URLs without placeholders
+            // FIX: Use your actual domain
             $successUrl = 'https://districtsmiles.online/payment/success?appointment_id=' . $appointment->appointment_id;
             $cancelUrl = 'https://districtsmiles.online/payment/cancelled?appointment_id=' . $appointment->appointment_id;
 
-            // Fix: Use the exact payload structure from working code
             $payload = [
                 "data" => [
                     "attributes" => [
@@ -123,7 +102,7 @@ class PaymongoController extends Controller
                             "amount" => $amount,
                             "currency" => "PHP",
                             "quantity" => 1,
-                            "images" => ['https://districtsmiles.online/images/logo.png'] // Use absolute URL
+                            "images" => ['https://districtsmiles.online/images/logo.png']
                         ]],
                         "payment_method_types" => $paymentMethods,
                         "description" => "Service Fee of ₱300 for " . $validated['service_name'],
@@ -203,7 +182,7 @@ class PaymongoController extends Controller
     }
     
     /**
-     * Success Payment - FIXED AUTHENTICATION ISSUE
+     * Success Payment - IMPROVED WITH DIRECT PAYMENT VERIFICATION
      */
     public function success(Request $request)
     {
@@ -224,42 +203,22 @@ class PaymongoController extends Controller
                 ->with('error', 'Invalid payment session.');
         }
 
-        // If user is logged in AND it's their appointment, use authenticated flow
-        if (Auth::check()) {
-            return $this->handleAuthenticatedSuccess($appointmentId, $request);
-        }
-
-        // Public user flow - just show success page without authentication
-        return $this->handlePublicSuccess($appointmentId, $request);
-    }
-
-    private function handleAuthenticatedSuccess($appointmentId, $request)
-    {
-        // Get appointment with authentication check
+        // Get appointment (with or without auth)
         $appointment = Appointment::where('appointment_id', $appointmentId)
-            ->where('patient_id', Auth::id())
             ->with(['service', 'schedule'])
             ->first();
 
         if (!$appointment) {
-            Log::error('Appointment not found or user mismatch', [
-                'appointment_id' => $appointmentId,
-                'authenticated_user_id' => Auth::id()
-            ]);
+            Log::error('Appointment not found', ['appointment_id' => $appointmentId]);
             return redirect()->route('customer.appointments')
                 ->with('error', 'Appointment not found.');
         }
 
-        Log::info('Authenticated user - Appointment found:', [
-            'appointment_id' => $appointment->appointment_id,
-            'status' => $appointment->status
-        ]);
-
-        // Check if already confirmed via webhook
+        // Check if already confirmed
         if ($appointment->status === 'confirmed') {
             $payment = Payment::where('appointment_id', $appointmentId)->first();
             
-            Log::info('Appointment already confirmed, showing success page');
+            Log::info('Appointment already confirmed via webhook');
             
             return Inertia::render('Payment/Success', [
                 'appointment' => $appointment,
@@ -270,32 +229,10 @@ class PaymongoController extends Controller
 
         Log::info('Appointment not yet confirmed, checking payment status...');
 
-        // If not confirmed yet, try to verify payment status
-        $isPaid = $this->verifyPaymentStatus($appointment->paymongo_session_id);
+        // DIRECT PAYMENT VERIFICATION - Check PayMongo session status
+        $isPaid = $this->verifyAndProcessPayment($appointment);
         
         if ($isPaid) {
-            Log::info('Payment verified via API, confirming appointment...');
-            
-            // Payment is verified, confirm appointment immediately
-            DB::transaction(function () use ($appointment) {
-                $appointment->update(['status' => 'confirmed']);
-                
-                $paymentMethod = $this->detectPaymentMethod($appointment->paymongo_session_id);
-                $payment = Payment::create([
-                    'appointment_id' => $appointment->appointment_id,
-                    'amount' => 300.00,
-                    'payment_method' => $paymentMethod,
-                    'payment_status' => 'completed',
-                    'transaction_reference' => $appointment->paymongo_session_id,
-                    'paid_at' => now(),
-                ]);
-
-                Log::info('Appointment confirmed via success URL verification', [
-                    'appointment_id' => $appointment->appointment_id,
-                    'payment_id' => $payment->payment_id
-                ]);
-            });
-
             $payment = Payment::where('appointment_id', $appointmentId)->first();
 
             return Inertia::render('Payment/Success', [
@@ -305,8 +242,6 @@ class PaymongoController extends Controller
             ]);
         }
 
-        Log::info('Payment not yet confirmed, showing processing page');
-
         // Show processing page if payment not yet confirmed
         return Inertia::render('Payment/Success', [
             'appointment' => $appointment,
@@ -314,84 +249,119 @@ class PaymongoController extends Controller
         ]);
     }
 
-    private function handlePublicSuccess($appointmentId, $request)
-    {
-        Log::info('Public user access - handling success without authentication');
-
-        // Get appointment without authentication check
-        $appointment = Appointment::where('appointment_id', $appointmentId)
-            ->with(['service', 'schedule'])
-            ->first();
-
-        if (!$appointment) {
-            Log::error('Appointment not found for public access', [
-                'appointment_id' => $appointmentId
-            ]);
-            return Inertia::render('Payment/Success', [
-                'message' => 'Appointment not found. Please contact support.'
-            ]);
-        }
-
-        Log::info('Public access - Appointment found:', [
-            'appointment_id' => $appointment->appointment_id,
-            'status' => $appointment->status
-        ]);
-
-        $payment = Payment::where('appointment_id', $appointmentId)->first();
-
-        if ($appointment->status === 'confirmed' && $payment) {
-            return Inertia::render('Payment/Success', [
-                'appointment' => $appointment,
-                'payment' => $payment,
-                'message' => 'Payment completed successfully! Your appointment is confirmed.'
-            ]);
-        }
-
-        // Show processing page
-        return Inertia::render('Payment/Success', [
-            'appointment' => $appointment,
-            'message' => 'We are verifying your payment. This may take a few moments...'
-        ]);
-    }
-
     /**
-     * Verify payment status directly with PayMongo API
+     * DIRECT PAYMENT VERIFICATION AND PROCESSING
      */
-    private function verifyPaymentStatus($checkoutSessionId)
+    private function verifyAndProcessPayment($appointment)
     {
         try {
             $paymongo_SecretKey = env('PAYMONGO_SECRET_KEY');
+            $sessionId = $appointment->paymongo_session_id;
             
-            Log::info('Verifying payment status for session:', ['session_id' => $checkoutSessionId]);
+            if (!$sessionId) {
+                Log::error('No PayMongo session ID found for appointment', [
+                    'appointment_id' => $appointment->appointment_id
+                ]);
+                return false;
+            }
+
+            Log::info('Checking PayMongo session status:', ['session_id' => $sessionId]);
             
             $response = Http::withBasicAuth($paymongo_SecretKey, '')
-                ->get("https://api.paymongo.com/v1/checkout_sessions/{$checkoutSessionId}");
+                ->get("https://api.paymongo.com/v1/checkout_sessions/{$sessionId}");
             
             if ($response->successful()) {
                 $sessionData = $response->json();
+                Log::info('PayMongo session data:', $sessionData);
                 
-                Log::info('Payment verification response:', ['data' => $sessionData]);
-                
-                // Fix: Check if payments array exists and has data
                 $payments = $sessionData['data']['attributes']['payments'] ?? [];
+                
                 if (!empty($payments)) {
-                    $status = $payments[0]['attributes']['status'] ?? null;
-                    Log::info('Payment status from payments array:', ['status' => $status]);
-                    return $status === 'paid';
+                    $paymentStatus = $payments[0]['attributes']['status'] ?? null;
+                    $paymentId = $payments[0]['id'] ?? null;
+                    
+                    Log::info('Payment status found:', [
+                        'status' => $paymentStatus,
+                        'payment_id' => $paymentId
+                    ]);
+                    
+                    if ($paymentStatus === 'paid') {
+                        // PROCESS PAYMENT IMMEDIATELY
+                        DB::transaction(function () use ($appointment, $sessionId, $paymentId) {
+                            // Update appointment status
+                            $appointment->update(['status' => 'confirmed']);
+                            
+                            // Create payment record
+                            $paymentMethod = $this->detectPaymentMethod($sessionId);
+                            
+                            Payment::create([
+                                'appointment_id' => $appointment->appointment_id,
+                                'amount' => 300.00,
+                                'payment_method' => $paymentMethod,
+                                'payment_status' => 'completed',
+                                'transaction_reference' => $paymentId ?: $sessionId,
+                                'paid_at' => now(),
+                            ]);
+
+                            Log::info('✅ PAYMENT PROCESSED VIA SUCCESS URL', [
+                                'appointment_id' => $appointment->appointment_id,
+                                'payment_id' => $paymentId,
+                                'session_id' => $sessionId
+                            ]);
+
+                            // Send receipt email
+                            try {
+                                $user = $appointment->patient;
+                                if ($user && $user->email) {
+                                    $payment = Payment::where('appointment_id', $appointment->appointment_id)->first();
+                                    Mail::to($user->email)->send(new PaymentReceiptMail($appointment, $payment));
+                                    Log::info('✅ PAYMENT RECEIPT EMAIL SENT');
+                                }
+                            } catch (\Exception $e) {
+                                Log::error('Failed to send email', ['error' => $e->getMessage()]);
+                            }
+                        });
+                        
+                        return true;
+                    }
                 }
                 
-                // Alternative check for session status
+                // Check session status as fallback
                 $sessionStatus = $sessionData['data']['attributes']['status'] ?? null;
                 Log::info('Session status:', ['status' => $sessionStatus]);
-                return $sessionStatus === 'active' || $sessionStatus === 'paid';
+                
+                if ($sessionStatus === 'paid') {
+                    // Process payment for paid session status
+                    DB::transaction(function () use ($appointment, $sessionId) {
+                        $appointment->update(['status' => 'confirmed']);
+                        
+                        $paymentMethod = $this->detectPaymentMethod($sessionId);
+                        
+                        Payment::create([
+                            'appointment_id' => $appointment->appointment_id,
+                            'amount' => 300.00,
+                            'payment_method' => $paymentMethod,
+                            'payment_status' => 'completed',
+                            'transaction_reference' => $sessionId,
+                            'paid_at' => now(),
+                        ]);
+
+                        Log::info('✅ PAYMENT PROCESSED VIA SESSION STATUS', [
+                            'appointment_id' => $appointment->appointment_id,
+                            'session_id' => $sessionId
+                        ]);
+                    });
+                    
+                    return true;
+                }
             } else {
-                Log::error('Payment verification API failed:', [
+                Log::error('PayMongo API failed:', [
                     'status' => $response->status(),
                     'response' => $response->body()
                 ]);
             }
         } catch (\Exception $e) {
-            Log::error('Payment status verification failed', [
+            Log::error('Payment verification failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -405,16 +375,28 @@ class PaymongoController extends Controller
      */
     public function webhook(Request $request)
     {
-        Log::info('=== PAYMONGO WEBHOOK START ===');
+        Log::info('=== PAYMONGO WEBHOOK RECEIVED ===');
         
-        // Log all webhook data for debugging
+        // Log raw payload for debugging
+        $rawPayload = $request->getContent();
+        Log::info('Webhook Raw Payload:', ['payload' => $rawPayload]);
         Log::info('Webhook Headers:', $request->headers->all());
-        Log::info('Webhook Raw Payload:', ['payload' => $request->getContent()]);
-        
-        $webhookData = $request->json()->all();
-        Log::info('Webhook JSON Data:', $webhookData);
 
-        // Verify webhook signature for security
+        try {
+            $webhookData = json_decode($rawPayload, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new \Exception('Invalid JSON payload: ' . json_last_error_msg());
+            }
+            
+            Log::info('Webhook JSON Data:', $webhookData);
+
+        } catch (\Exception $e) {
+            Log::error('Webhook JSON parsing failed:', ['error' => $e->getMessage()]);
+            return response()->json(['error' => 'Invalid JSON'], 400);
+        }
+
+        // Verify webhook signature
         if (!$this->verifyWebhookSignature($request)) {
             Log::error('Webhook signature verification failed');
             return response()->json(['error' => 'Invalid signature'], 401);
@@ -464,7 +446,7 @@ class PaymongoController extends Controller
                 throw new \Exception('No appointment ID in webhook metadata');
             }
 
-            // Get appointment - NO AUTHENTICATION CHECK FOR WEBHOOK
+            // Get appointment
             $appointment = Appointment::where('appointment_id', $appointmentId)->first();
             
             if (!$appointment) {
@@ -483,8 +465,6 @@ class PaymongoController extends Controller
                 'status' => 'confirmed',
                 'paymongo_session_id' => $checkoutSessionId
             ]);
-
-            Log::info('Appointment updated to confirmed', ['appointment_id' => $appointmentId]);
 
             // ✅ CREATE PAYMENT RECORD
             $paymentMethod = $this->detectPaymentMethodFromWebhook($webhookData);
