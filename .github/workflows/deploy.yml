@@ -11,6 +11,17 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        
+    - name: Install Composer dependencies
+      run: composer install --no-dev --optimize-autoloader --no-interaction
+        
+    - name: Generate Ziggy routes
+      run: php artisan ziggy:generate
+        
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -22,7 +33,7 @@ jobs:
         npm ci
         npm run build
         
-    - name: Deploy via Git pull
+    - name: Deploy to server
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.HOSTINGER_HOST }}
@@ -33,8 +44,6 @@ jobs:
           cd ~/domains/districtsmiles.online/public_html
           git pull origin master
           composer install --no-dev --optimize-autoloader
-          php artisan migrate --force
           php artisan config:cache
           php artisan route:cache
           php artisan view:cache
-          php artisan cache:clear
