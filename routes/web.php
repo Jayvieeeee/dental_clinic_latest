@@ -55,11 +55,12 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/customer/appointments', [AppointmentController::class, 'index'])->name('customer.view');
     Route::get('/schedule-appointment', [AppointmentController::class, 'create'])->name('customer.appointment');
     Route::post('/schedule-appointment', [AppointmentController::class, 'store'])->name('customer.appointment.store');
-    Route::get('/payment', [AppointmentController::class, 'showPaymentPage'])->name('customer.payment.view');
     Route::post('/appointments/{id}/cancel', [AppointmentController::class, 'cancel'])->name('customer.appointment.cancel');
     Route::get('/available-slots', [AppointmentController::class, 'getAvailableSlots'])->name('customer.available-slots');
     Route::get('/appointment/check-availability', [AppointmentController::class, 'checkAvailability'])->name('appointment.check-availability');
     Route::post('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])->name('customer.appointment.reschedule');
+    Route::get('/appointment/payment', [AppointmentController::class, 'showPaymentPage'])->name('customer.payment.view');
+    Route::get('/appointment/payment/success', [AppointmentController::class, 'paymentSuccessHandler'])->name('customer.payment.success');
 
 //=========================================== Payment Routes ===================================================
     Route::post('/customer/payment/create', [PaymongoController::class, 'createPayment'])->name('payment.create');

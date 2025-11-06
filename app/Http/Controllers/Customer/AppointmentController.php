@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Cache;
 class AppointmentController extends Controller
 {
     /**
-     * View an appointment
+     * View an appointment (Kept index for backward compatibility/route resource convention)
      */
     public function index()
     {
@@ -42,10 +42,12 @@ class AppointmentController extends Controller
                           ' - ' . date('g:i a', strtotime($appointment->schedule->end_time))
                         : 'N/A',
                     'status' => ucfirst($appointment->status),
+                    // Ensure payment_status is correctly retrieved or defaulted
                     'payment_status' => ucfirst($appointment->payment_status ?? 'Pending Payment'), 
                 ];
             });
 
+        // NOTE: index() typically renders a list, the dedicated view() method below might be better for a full list
         return Inertia::render('Customer/ViewAppointment', [
             'appointments' => $appointments,
         ]);
@@ -93,7 +95,7 @@ class AppointmentController extends Controller
         ]);
 
         return DB::transaction(function () use ($validated) {
-            // Check if appointment date is at least 1 day in advance
+            // Check if appointment date is at least 1 day in advance (Redundant check due to 'after:today' but kept for explicit logic)
             $appointmentDate = Carbon::parse($validated['appointment_date']);
             $today = Carbon::today();
             
@@ -132,6 +134,10 @@ class AppointmentController extends Controller
             
             // Use start_time for schedule_datetime field
             $scheduleDateTime = Carbon::parse($validated['appointment_date'] . ' ' . $schedule->start_time);
+            
+            // Get service for price
+            $service = Service::find($validated['service_id']);
+            $amount = $service->price ?? 300.00; // Use service price or default
 
             // Create the appointment (Status: 'pending' for payment)
             $appointment = Appointment::create([
@@ -141,10 +147,11 @@ class AppointmentController extends Controller
                 'appointment_date' => $validated['appointment_date'],
                 'schedule_datetime' => $scheduleDateTime,
                 'status' => 'pending', 
+                'payment_status' => 'pending_payment', // Set explicit initial payment status
                 // 'created_by' removed as column doesn't exist
             ]);
             
-            // Set session data...
+            // Set session data for payment flow
             session([
                 'pending_payment' => [
                     'temp_appointment_id' => $appointment->appointment_id, 
@@ -152,7 +159,8 @@ class AppointmentController extends Controller
                     'schedule_id' => $validated['schedule_id'],
                     'appointment_date' => $validated['appointment_date'],
                     'user_id' => Auth::id(),
-                    'amount' => 30000, 
+                    // Use the fetched amount
+                    'amount' => $amount, 
                 ],
                 'pending_appointment' => [
                     'appointment_id' => $appointment->appointment_id,
@@ -180,7 +188,7 @@ class AppointmentController extends Controller
         $pendingAppointment = session('pending_appointment');
         
         if (!$pendingAppointment || $pendingAppointment['user_id'] != Auth::id()) {
-            return redirect()->route('customer.appointment')->with('error', 'No pending appointment found.');
+            return redirect()->route('customer.appointment.index')->with('error', 'No pending appointment found.'); // Changed route to index for consistency
         }
 
         $appointment = Appointment::find($pendingAppointment['appointment_id']);
@@ -191,13 +199,15 @@ class AppointmentController extends Controller
              // If the appointment exists in session but not DB, clear session
              session()->forget('pending_appointment');
              session()->forget('pending_payment');
-             return redirect()->route('customer.appointment')->with('error', 'Appointment data not found or session mismatch.');
+             return redirect()->route('customer.appointment.index')->with('error', 'Appointment data not found or session mismatch.'); // Changed route to index for consistency
         }
 
         // IMPROVEMENT: Ensure the amount is correctly calculated/retrieved, not hardcoded.
-        $amountInPesos = $service->price ?? 300.00; // Use service price or default
+        // Retrieve amount from session or service, prioritizing the session amount if it was correctly set in store()
+        $pendingPayment = session('pending_payment');
+        $amountInPesos = $pendingPayment['amount'] ?? $service->price ?? 300.00; 
 
-        return Inertia::render('Customer/PaymentPage', [ // Changed ViewAppointment to PaymentPage (assuming a dedicated page)
+        return Inertia::render('Customer/PaymentPage', [ 
             'appointment_data' => [
                 'appointment_id' => $appointment->appointment_id,
                 'service_name' => $service->service_name,
@@ -210,30 +220,36 @@ class AppointmentController extends Controller
     }
 
     /**
-     * View user's appointments
+     * View user's appointments (Dedicated view method for the main list page)
      */
     public function view()
     {
         $user = Auth::user();
+        
+        // Use $user->id instead of $user->user_id if 'id' is the primary key and relationship field
+        // Assuming $user->user_id is the correct column name for the patient_id lookup
         $appointments = Appointment::with(['service', 'schedule'])
-            ->where('patient_id', $user->user_id)
+            ->where('patient_id', $user->user_id) 
             ->orderBy('appointment_date', 'desc')
             ->orderBy('schedule_datetime', 'desc')
             ->get()
             ->map(function ($appointment) {
-                $timeSlot = $appointment->schedule ? 
+                // Ensure service and schedule are present before accessing properties
+                $serviceName = optional($appointment->service)->service_name ?? 'Service Deleted'; 
+                $timeSlot = optional($appointment->schedule)->start_time && optional($appointment->schedule)->end_time ? 
                     Carbon::parse($appointment->schedule->start_time)->format('g:i A') . ' - ' . 
                     Carbon::parse($appointment->schedule->end_time)->format('g:i A') : 
                     'N/A';
 
                 return [
                     'appointment_id' => $appointment->appointment_id,
-                    'service_name' => $appointment->service->service_name,
+                    'service_name' => $serviceName,
                     'appointment_date' => $appointment->appointment_date,
                     'schedule_datetime' => $appointment->schedule_datetime,
                     'status' => $appointment->status,
                     'formatted_date' => Carbon::parse($appointment->appointment_date)->format('F j, Y'),
                     'formatted_time' => $timeSlot,
+                    // Check logic for reschedule/cancel based on time/status
                     'can_cancel' => $appointment->status === 'confirmed', 
                     'can_reschedule' => $appointment->status === 'confirmed', 
                     'is_pending' => $appointment->status === 'pending',
@@ -269,9 +285,9 @@ class AppointmentController extends Controller
                 return back()->with('error', 'Appointment not found.');
             }
 
-            // Only allow cancellation of CONFIRMED appointments
-            if ($appointment->status !== 'confirmed') {
-                return back()->with('error', 'Only confirmed appointments can be cancelled.');
+            // Also allow cancellation of 'pending' appointments (before payment confirmation)
+            if (!in_array($appointment->status, ['confirmed', 'pending'])) {
+                return back()->with('error', 'Only pending or confirmed appointments can be cancelled.');
             }
             
             // Update appointment status to cancelled
@@ -320,11 +336,7 @@ class AppointmentController extends Controller
                 return back()->with('error', 'Appointment not found.');
             }
 
-            if (in_array($appointment->status, ['cancelled', 'completed'])) {
-                return back()->with('error', 'Cancelled or completed appointments cannot be rescheduled.');
-            }
-
-            if ($appointment->status !== 'confirmed') {
+            if (in_array($appointment->status, ['cancelled', 'completed', 'pending'])) { // Added pending, as only confirmed should be rescheduled
                 return back()->with('error', 'Only confirmed appointments can be rescheduled.');
             }
 
@@ -350,13 +362,13 @@ class AppointmentController extends Controller
                 'schedule_id'       => $validated['new_schedule_id'],
                 'appointment_date'  => $validated['new_appointment_date'],
                 'schedule_datetime' => $newScheduleDateTime, // Use new datetime
-                'status'            => 'confirmed',
+                'status'            => 'confirmed', // Maintain confirmed status after successful reschedule
                 // Removed 'rescheduled_at' and 'rescheduled_by' as columns don't exist
             ]);
 
             Log::info('Appointment rescheduled successfully', [
-                'appointment_id'              => $appointment->appointment_id,
-                'user_id'                     => Auth::id(),
+                'appointment_id'            => $appointment->appointment_id,
+                'user_id'                   => Auth::id(),
             ]);
 
             return redirect()
@@ -380,7 +392,8 @@ class AppointmentController extends Controller
 
             if (!$appointment) {
                 Log::error('Appointment not found for confirmation', ['appointment_id' => $appointmentId]);
-                throw new \Exception('Appointment not found');
+                // Use a more specific exception or log a message and return false if not throwing
+                throw new \Exception('Appointment not found or unauthorized'); 
             }
             
             if ($appointment->status === 'confirmed') {
@@ -388,10 +401,16 @@ class AppointmentController extends Controller
                  return true;
             }
 
+            // Only allow confirmation if current status is 'pending' (pending payment)
+            if ($appointment->status !== 'pending') {
+                 Log::error('Attempt to confirm non-pending appointment', ['appointment_id' => $appointmentId, 'status' => $appointment->status]);
+                 throw new \Exception('Appointment status is not pending.');
+            }
+
             // Update status to confirmed and payment_status if available
             $appointment->update([
                 'status' => 'confirmed',
-                'payment_status' => 'paid', // Assuming this field exists
+                'payment_status' => 'paid', // Assuming this field exists and is updated here
                 // Removed 'confirmed_at' as column doesn't exist
             ]);
 
@@ -420,7 +439,7 @@ class AppointmentController extends Controller
 
         $date = Carbon::parse($request->query('date'))->toDateString();
 
-        // Check if date is at least 1 day in advance
+        // Check if date is at least 1 day in advance (Redundant check but kept for explicit API response)
         $today = Carbon::today();
         $selectedDate = Carbon::parse($date);
         
@@ -490,7 +509,7 @@ class AppointmentController extends Controller
             'date' => 'required|date|after:today',
         ]);
 
-        // Check if date is at least 1 day in advance
+        // Check if date is at least 1 day in advance (Redundant check but kept for explicit API response)
         $today = Carbon::today();
         $selectedDate = Carbon::parse($request->date);
         
@@ -659,5 +678,39 @@ class AppointmentController extends Controller
             'failed' => $failedCount,
             'total' => $appointments->count()
         ];
+    }
+
+    /**
+     * Handle the redirect after successful payment.
+     */
+    public function paymentSuccessHandler(Request $request)
+    {
+        $pendingAppointment = session('pending_appointment');
+
+        // 1. Check if we have pending appointment data in the session
+        if (!$pendingAppointment || $pendingAppointment['user_id'] != Auth::id()) {
+            return redirect()->route('customer.appointment.index')
+                ->with('error', 'Payment complete, but no matching pending appointment found. Please contact support.');
+        }
+
+        $appointmentId = $pendingAppointment['appointment_id'];
+
+        try {
+            // 2. Call the confirmation logic
+            $this->confirmAfterPayment($appointmentId); 
+            
+            // 3. SUCCESS - Redirect to the user's appointment list
+            return redirect()->route('customer.view')
+                ->with('success', 'Appointment successfully confirmed and paid!');
+
+        } catch (\Exception $e) {
+            // 4. LOG ERROR - If confirmation fails for any reason
+            Log::error('Failed to confirm appointment after payment.', [
+                'appointment_id' => $appointmentId, 
+                'error' => $e->getMessage()
+            ]);
+            return redirect()->route('customer.appointment.index')
+                ->with('error', 'Payment was successful, but confirmation failed. Please contact support immediately.');
+        }
     }
 }
