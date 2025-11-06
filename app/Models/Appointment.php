@@ -20,6 +20,7 @@ class Appointment extends Model
         'service_id',
         'schedule_id',
         'appointment_date',
+        'schedule_datetime',
         'status',
         'paymongo_session_id', // Added this field for payment tracking
     ];
