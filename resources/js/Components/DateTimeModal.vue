@@ -38,7 +38,7 @@ const scheduleCache = ref({})
 let debounceTimer = null
 const DEBOUNCE_DELAY = 500 // Wait 500ms after last change
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL 
+const API_BASE = 'https://districtsmiles.online'
 
 // Get tomorrow's date for minimum selection
 const tomorrow = new Date()

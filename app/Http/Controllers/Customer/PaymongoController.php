@@ -198,10 +198,40 @@ public function createPayment(Request $request)
 /**
  * Success Payment - FIXED: Ensure payment is saved to database
  */
+/**
+ * Success Payment - FIXED: Show success page instead of redirecting to login
+ */
 public function success(Request $request)
 {
-    return redirect()->route('customer.appointment')
-        ->with('info', 'We are confirming your payment. Please wait a few seconds.');
+    $appointmentId = $request->query('appointment_id');
+    $checkoutSessionId = $request->query('checkout_session_id');
+    
+    Log::info('Payment success callback', [
+        'appointment_id' => $appointmentId,
+        'checkout_session_id' => $checkoutSessionId,
+        'user_id' => Auth::id()
+    ]);
+
+    if (!$appointmentId) {
+        return redirect()->route('customer.appointment')
+            ->with('error', 'Invalid payment session.');
+    }
+
+    // Check if appointment exists and belongs to user
+    $appointment = Appointment::where('appointment_id', $appointmentId)
+        ->where('patient_id', Auth::id())
+        ->first();
+
+    if (!$appointment) {
+        return redirect()->route('customer.appointment')
+            ->with('error', 'Appointment not found.');
+    }
+
+    // Show success page with appointment details
+    return view('payment.success', [
+        'appointment' => $appointment,
+        'checkoutSessionId' => $checkoutSessionId
+    ]);
 }
 
 
