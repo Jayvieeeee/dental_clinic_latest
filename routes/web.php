@@ -13,7 +13,6 @@ use App\Http\Controllers\Customer\AppointmentController;
 use App\Http\Controllers\Customer\ScheduleController;
 use App\Http\Controllers\Customer\PaymongoController;
 use App\Http\Controllers\Customer\FeedbackController;
-use Illuminate\Support\Facades\Auth;
 
 
 
@@ -115,21 +114,5 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-// Add this to your web.php routes file temporarily
-Route::get('/debug-appointments', function() {
-    $user = Auth::user();
-    $appointments = \App\Models\Appointment::with(['service', 'schedule'])
-        ->where('patient_id', $user->id)
-        ->get();
-        
-    $payments = \App\Models\Payment::all();
-    
-    return response()->json([
-        'user_id' => $user->id,
-        'appointments' => $appointments,
-        'payments' => $payments,
-        'appointments_count' => $appointments->count(),
-        'payments_count' => $payments->count()
-    ]);
-});
+
 require __DIR__.'/auth.php';
