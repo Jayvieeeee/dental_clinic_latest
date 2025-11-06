@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Appointment extends Model
 {
@@ -19,16 +21,25 @@ class Appointment extends Model
         'schedule_id',
         'appointment_date',
         'status',
+        'paymongo_session_id', // Added this field for payment tracking
     ];
 
     protected $casts = [
         'appointment_date' => 'date',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
+
+    // Status constants for better code readability
+    const STATUS_PENDING = 'pending';
+    const STATUS_CONFIRMED = 'confirmed';
+    const STATUS_CANCELLED = 'cancelled';
+    const STATUS_COMPLETED = 'completed';
 
     /**
      * Get the patient that owns the appointment.
      */
-    public function patient()
+    public function patient(): BelongsTo
     {
         return $this->belongsTo(User::class, 'patient_id', 'user_id');
     }
@@ -36,7 +47,7 @@ class Appointment extends Model
     /**
      * Get the service for the appointment.
      */
-    public function service()
+    public function service(): BelongsTo
     {
         return $this->belongsTo(Service::class, 'service_id', 'service_id');
     }
@@ -44,7 +55,7 @@ class Appointment extends Model
     /**
      * Get the schedule for the appointment.
      */
-    public function schedule()
+    public function schedule(): BelongsTo
     {
         return $this->belongsTo(Schedule::class, 'schedule_id', 'schedule_id');
     }
@@ -52,8 +63,56 @@ class Appointment extends Model
     /**
      * Get the payment for the appointment.
      */
-    public function payment()
+    public function payment(): HasOne
     {
         return $this->hasOne(Payment::class, 'appointment_id', 'appointment_id');
+    }
+
+    /**
+     * Scope for pending appointments
+     */
+    public function scopePending($query)
+    {
+        return $query->where('status', self::STATUS_PENDING);
+    }
+
+    /**
+     * Scope for confirmed appointments
+     */
+    public function scopeConfirmed($query)
+    {
+        return $query->where('status', self::STATUS_CONFIRMED);
+    }
+
+    /**
+     * Scope for cancelled appointments
+     */
+    public function scopeCancelled($query)
+    {
+        return $query->where('status', self::STATUS_CANCELLED);
+    }
+
+    /**
+     * Check if appointment is pending
+     */
+    public function isPending(): bool
+    {
+        return $this->status === self::STATUS_PENDING;
+    }
+
+    /**
+     * Check if appointment is confirmed
+     */
+    public function isConfirmed(): bool
+    {
+        return $this->status === self::STATUS_CONFIRMED;
+    }
+
+    /**
+     * Check if appointment is cancelled
+     */
+    public function isCancelled(): bool
+    {
+        return $this->status === self::STATUS_CANCELLED;
     }
 }
