@@ -40,18 +40,26 @@ jobs:
         
     - name: Create deployment package
       run: |
-        mkdir -p deployment
+        mkdir -p deploy_final
         rsync -av \
-          --exclude='.git' \
+          --exclude='.git*' \
           --exclude='.github' \
           --exclude='node_modules' \
           --exclude='tests' \
-          --exclude='storage/framework/views/*' \
-          --exclude='storage/logs/*' \
-          --exclude='.env.example' \
-          --exclude='.gitignore' \
-          --exclude='*.md' \
-          ./ deployment/
+          --exclude='*.log' \
+          --exclude='*.sqlite' \
+          --exclude='*.zip' \
+          --exclude='*.tar' \
+          --exclude='storage/*' \
+          --exclude='bootstrap/cache/*' \
+          --exclude='deploy_*' \
+          --include='storage/app' \
+          --include='storage/framework' \
+          --exclude='storage/framework/*' \
+          --include='storage/framework/cache' \
+          --include='storage/framework/views' \
+          --include='storage/framework/sessions' \
+          ./ deploy_final/
         
     - name: Deploy via SFTP
       uses: wlixcc/SFTP-Deploy-Action@v1.2.4
@@ -60,6 +68,6 @@ jobs:
         server: ${{ secrets.HOSTINGER_HOST }}
         ssh_private_key: ${{ secrets.HOSTINGER_PRIVATE_KEY }}
         port: '65002'
-        local_path: './deployment/'
+        local_path: './deploy_final/' 
         remote_path: './domains/districtsmiles.online/public_html/'
         sftp_only: true
