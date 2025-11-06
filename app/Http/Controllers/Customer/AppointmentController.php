@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\AppointmentReminder;
 use App\Models\User;
-use App\Models\Payment; // <<< ADDED
+use App\Models\Payment; 
 use Illuminate\Support\Facades\Cache;
 
 class AppointmentController extends Controller
@@ -256,7 +256,7 @@ class AppointmentController extends Controller
                     'formatted_date' => Carbon::parse($appointment->appointment_date)->format('F j, Y'),
                     'formatted_time' => $timeSlot,
                     // Check logic for reschedule/cancel based on time/status
-                    'can_cancel' => $appointment->status === 'confirmed', 
+                    'can_cancel' => in_array($appointment->status, ['confirmed', 'pending']), // Allow cancellation of confirmed AND pending
                     'can_reschedule' => $appointment->status === 'confirmed', 
                     'is_pending' => $appointment->status === 'pending',
                     'is_confirmed' => $appointment->status === 'confirmed',
@@ -384,56 +384,55 @@ class AppointmentController extends Controller
         });
     }
     
-// In App\Http\Controllers\Customer\AppointmentController
+    /**
+     * Confirm appointment after successful payment (e.g., from a webhook or redirect success page).
+     */
+    public function confirmAfterPayment($appointmentId)
+    {
+        // This should ONLY be called by a trusted route/service 
+        return DB::transaction(function () use ($appointmentId) {
+            // Eager load the payment relationship to utilize the model's checkAndConfirmPayment() method
+            $appointment = Appointment::with('payment')
+                ->where('appointment_id', $appointmentId)
+                ->first();
 
-/**
- * Confirm appointment after successful payment (e.g., from a webhook or redirect success page).
- */
-public function confirmAfterPayment($appointmentId)
-{
-    // This should ONLY be called by a trusted route/service 
-    return DB::transaction(function () use ($appointmentId) {
-        // Eager load the payment relationship to utilize the model's checkAndConfirmPayment() method
-        $appointment = Appointment::with('payment')
-            ->where('appointment_id', $appointmentId)
-            ->first();
-
-        if (!$appointment) {
-            Log::error('Appointment not found for confirmation', ['appointment_id' => $appointmentId]);
-            // Still throw to prevent the transaction from proceeding
-            throw new \Exception('Appointment not found'); 
-        }
-        
-        // CRITICAL CHANGE: Use the model's new method to check the payment table before confirming
-        $isConfirmed = $appointment->checkAndConfirmPayment();
-
-        if ($isConfirmed) {
-            Log::info('Appointment confirmed after payment check (using model logic)', [
-                'appointment_id' => $appointment->appointment_id,
-                'user_id' => $appointment->patient_id, 
-            ]);
+            if (!$appointment) {
+                Log::error('Appointment not found for confirmation', ['appointment_id' => $appointmentId]);
+                // Still throw to prevent the transaction from proceeding
+                throw new \Exception('Appointment not found'); 
+            }
             
-            // OPTIONAL: Clear session now that payment is done
-            session()->forget('pending_appointment');
-            session()->forget('pending_payment');
-            
-            return true;
+            // CRITICAL CHANGE: Use the model's new method to check the payment table before confirming
+            // NOTE: This assumes you have implemented a checkAndConfirmPayment() method on your Appointment model.
+            $isConfirmed = $appointment->checkAndConfirmPayment();
 
-        } elseif ($appointment->isConfirmed()) {
-             // Handle case where it was already confirmed (e.g., webhook retry)
-             Log::info('Appointment already confirmed after payment check.', ['appointment_id' => $appointmentId]);
-             return true; 
-        } else {
-            // The payment status is not yet completed in the payment table.
-            Log::error('Payment status check failed or appointment status not pending.', [
-                'appointment_id' => $appointmentId, 
-                'payment_status' => optional($appointment->payment)->payment_status ?? 'No Payment Record',
-            ]);
-            // Throw an exception to prevent non-paid appointments from being confirmed.
-            throw new \Exception('Payment is not yet confirmed in the payment record, cannot confirm appointment.');
-        }
-    });
-}
+            if ($isConfirmed) {
+                Log::info('Appointment confirmed after payment check (using model logic)', [
+                    'appointment_id' => $appointment->appointment_id,
+                    'user_id' => $appointment->patient_id, 
+                ]);
+                
+                // OPTIONAL: Clear session now that payment is done
+                session()->forget('pending_appointment');
+                session()->forget('pending_payment');
+                
+                return true;
+
+            } elseif ($appointment->isConfirmed()) {
+                 // Handle case where it was already confirmed (e.g., webhook retry)
+                 Log::info('Appointment already confirmed after payment check.', ['appointment_id' => $appointmentId]);
+                 return true; 
+            } else {
+                // The payment status is not yet completed in the payment table.
+                Log::error('Payment status check failed or appointment status not pending.', [
+                    'appointment_id' => $appointmentId, 
+                    'payment_status' => optional($appointment->payment)->payment_status ?? 'No Payment Record',
+                ]);
+                // Throw an exception to prevent non-paid appointments from being confirmed.
+                throw new \Exception('Payment is not yet confirmed in the payment record, cannot confirm appointment.');
+            }
+        });
+    }
 
     /**
      * Get available time slots for a specific date
@@ -688,48 +687,46 @@ public function confirmAfterPayment($appointmentId)
         ];
     }
 
-// In App\Http\Controllers\Customer\AppointmentController
+    /**
+     * Handle the redirect after successful payment.
+     */
+    public function paymentSuccessHandler(Request $request)
+    {
+        $pendingAppointment = session('pending_appointment');
 
-/**
- * Handle the redirect after successful payment.
- */
-public function paymentSuccessHandler(Request $request)
-{
-    $pendingAppointment = session('pending_appointment');
+        if (!$pendingAppointment || $pendingAppointment['user_id'] != Auth::id()) {
+            // Use an Inertia redirect on failure to ensure a proper page load
+            return redirect()->route('customer.view')
+                ->with('error', 'Payment complete, but no matching pending appointment found. Please contact support.');
+        }
 
-    if (!$pendingAppointment || $pendingAppointment['user_id'] != Auth::id()) {
-        // Use an Inertia redirect on failure to ensure a proper page load
-        return redirect()->route('customer.appointment.index')
-            ->with('error', 'Payment complete, but no matching pending appointment found. Please contact support.');
+        $appointmentId = $pendingAppointment['appointment_id'];
+
+        try {
+            // Call the confirmation logic. This will now ensure the payment record is complete.
+            $this->confirmAfterPayment($appointmentId); 
+            
+            // CRITICAL CHANGE: Instead of a full redirect, return an Inertia response with success status.
+            // We pass the success message via a prop or a dedicated field.
+            return Inertia::render('Customer/ScheduleAppointment', [ // Keep it on the current scheduling page
+                'success_confirmation' => true,
+                'success_message' => 'Appointment successfully confirmed and paid!',
+                // Include your standard page props here (user, services, etc., to avoid page blanking)
+                'user' => Auth::user(), 
+                'services' => Service::all(), 
+                'min_date' => Carbon::tomorrow()->format('Y-m-d'),
+                'max_date' => Carbon::now()->addMonths(3)->format('Y-m-d'),
+                'today' => Carbon::today()->format('Y-m-d'),
+                'tomorrow' => Carbon::tomorrow()->format('Y-m-d'),
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to confirm appointment after payment.', [
+                'appointment_id' => $appointmentId, 
+                'error' => $e->getMessage()
+            ]);
+            return redirect()->route('customer.appointment.index')
+                ->with('error', 'Payment was successful, but confirmation failed. Please contact support immediately.');
+        }
     }
-
-    $appointmentId = $pendingAppointment['appointment_id'];
-
-    try {
-        // Call the confirmation logic. This will now ensure the payment record is complete.
-        $this->confirmAfterPayment($appointmentId); 
-        
-        // CRITICAL CHANGE: Instead of a full redirect, return an Inertia response with success status.
-        // We pass the success message via a prop or a dedicated field.
-        return Inertia::render('Customer/ScheduleAppointment', [ // Keep it on the current scheduling page
-            'success_confirmation' => true,
-            'success_message' => 'Appointment successfully confirmed and paid!',
-            // Include your standard page props here (user, services, etc., to avoid page blanking)
-            'user' => Auth::user(), 
-            'services' => Service::all(), 
-            'min_date' => Carbon::tomorrow()->format('Y-m-d'),
-            'max_date' => Carbon::now()->addMonths(3)->format('Y-m-d'),
-            'today' => Carbon::today()->format('Y-m-d'),
-            'tomorrow' => Carbon::tomorrow()->format('Y-m-d'),
-        ]);
-
-    } catch (\Exception $e) {
-        Log::error('Failed to confirm appointment after payment.', [
-            'appointment_id' => $appointmentId, 
-            'error' => $e->getMessage()
-        ]);
-        return redirect()->route('customer.appointment.index')
-            ->with('error', 'Payment was successful, but confirmation failed. Please contact support immediately.');
-    }
-}
 }
