@@ -26,7 +26,6 @@ const form = ref({
   scheduleId: ''
 });
 
-
 const showSlotPicker = ref(false);
 const showModal = ref(false);
 const modalMessage = ref('');
@@ -70,7 +69,6 @@ const handleDateTimeSelected = (data) => {
     scheduleId: form.value.scheduleId
   });
 };
-
 
 // update handlers for v-model 
 const updateSelectedDate = (date) => {
@@ -121,7 +119,7 @@ const handlePaymentSuccess = (paymentData) => {
   openModal('Payment successful! Your appointment has been confirmed.');
   setTimeout(() => {
     showModal.value = false;
-    router.visit(route('customer.view'));
+    router.visit(route('customer.appointments'));
   }, 2000);
 };
 
@@ -202,11 +200,10 @@ const handlePaymentCancelled = () => {
             </PrimaryButton>
 
             <!-- Show date and time -->
-      <div v-if="form.date && form.timeLabel" class="mt-4 text-base text-gray-700">
-        <span class="font-semibold">Selected:</span>
-        <span class="ml-2">{{ form.date }} - {{ form.timeLabel }}</span>
-      </div>
-
+            <div v-if="form.date && form.timeLabel" class="mt-4 text-base text-gray-700">
+              <span class="font-semibold">Selected:</span>
+              <span class="ml-2">{{ form.date }} - {{ form.timeLabel }}</span>
+            </div>
           </section>
 
           <!-- Payment Button-->
@@ -217,23 +214,22 @@ const handlePaymentCancelled = () => {
               Proceed to Payment
             </PrimaryButton>
           </div>
-
         </div>
       </div>
     </div>
-  </CustomerLayout>
 
-  <!-- Modals -->
-  <Modal :show="showModal" @close="showModal = false">
-    <div class="p-6 text-center">
-      <p class="text-lg font-semibold text-gray-800">{{ modalMessage }}</p>
-      <PrimaryButton @click="showModal = false" class="mt-6 bg-dark text-white px-6 py-2 rounded-full">
-        OK
-      </PrimaryButton>
-    </div>
-  </Modal>
+    <!-- MODALS - Moved inside CustomerLayout but outside main content -->
+    <!-- Message Modal -->
+    <Modal :show="showModal" @close="showModal = false">
+      <div class="p-6 text-center">
+        <p class="text-lg font-semibold text-gray-800">{{ modalMessage }}</p>
+        <PrimaryButton @click="showModal = false" class="mt-6 bg-dark text-white px-6 py-2 rounded-full">
+          OK
+        </PrimaryButton>
+      </div>
+    </Modal>
 
-  <!-- Date & Time Picker -->
+    <!-- Date & Time Picker Modal -->
     <DateTimeModal
       :modelValue="showSlotPicker"
       :selectedDate="form.date"
@@ -244,22 +240,23 @@ const handlePaymentCancelled = () => {
       @datetime-selected="handleDateTimeSelected"
     />  
 
-<!-- Payment Modal (No Redirect) -->
-<PaymentModal
-  v-model="showPaymentModal"
-  :appointment-data="{
-    service: form.service,
-    serviceId: form.serviceId,
-    date: form.date,
-    time: form.timeLabel,
-    scheduleId: form.scheduleId,
-    customer: {
-      firstName: form.firstName,
-      lastName: form.lastName,
-      email: form.email
-    }
-  }"
-  @payment-success="handlePaymentSuccess"
-  @payment-cancelled="handlePaymentCancelled"
-/>
+    <!-- Payment Modal -->
+    <PaymentModal
+      v-model="showPaymentModal"
+      :appointment-data="{
+        service: form.service,
+        serviceId: form.serviceId,
+        date: form.date,
+        time: form.timeLabel,
+        scheduleId: form.scheduleId,
+        customer: {
+          firstName: form.firstName,
+          lastName: form.lastName,
+          email: form.email
+        }
+      }"
+      @payment-success="handlePaymentSuccess"
+      @payment-cancelled="handlePaymentCancelled"
+    />
+  </CustomerLayout>
 </template>
