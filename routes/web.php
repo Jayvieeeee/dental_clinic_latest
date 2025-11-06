@@ -61,7 +61,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/appointments', [AppointmentController::class, 'view'])->name('customer.appointments');
     Route::get('/appointment/create', [AppointmentController::class, 'create'])->name('customer.appointment.create');
     Route::post('/appointment/store', [AppointmentController::class, 'store'])->name('customer.appointment.store');
-    Route::post('/appointment/confirm-payment', [AppointmentController::class, 'confirmPayment'])->name('customer.appointment.confirm-payment');
+    Route::post('/appointment/confirm-payment', [AppointmentController::class, 'confirmPayment'])->name('appointment.confirm-payment');
     Route::get('/appointment/slots', [AppointmentController::class, 'getAvailableSlots'])->name('customer.appointment.slots');
 
 
