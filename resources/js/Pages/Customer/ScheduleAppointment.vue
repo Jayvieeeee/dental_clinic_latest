@@ -244,7 +244,7 @@ const handlePaymentCancelled = () => {
       @datetime-selected="handleDateTimeSelected"
     />  
 
-  <!-- Payment Modal -->
+<!-- Payment Modal (No Redirect) -->
 <PaymentModal
   v-model="showPaymentModal"
   :appointment-data="{
@@ -252,7 +252,6 @@ const handlePaymentCancelled = () => {
     serviceId: form.serviceId,
     date: form.date,
     time: form.timeLabel,
-    scheduleDatetime: `${form.date} ${form.dateTime}`,
     scheduleId: form.scheduleId,
     customer: {
       firstName: form.firstName,

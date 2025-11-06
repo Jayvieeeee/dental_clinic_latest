@@ -30,7 +30,9 @@ Route::get('/', function () {
     Route::get('/testimonials', fn() => Inertia::render('Landing/Testimonials'));
     //Payment 
     Route::post('/payment/webhook', [PaymongoController::class, 'webhook'])->name('payment.webhook');
-
+    Route::post('/customer/payment/create', [PaymongoController::class, 'createPayment'])->name('payment.create');
+    Route::get('/payment/success', [PaymongoController::class, 'success'])->name('payment.success');
+    Route::get('/payment/cancelled', [PaymongoController::class, 'cancelled'])->name('payment.cancelled');
 
    // Schedule Routes
     Route::prefix('schedules')->group(function () {
@@ -55,20 +57,20 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/feedback', [FeedbackController::class, 'index'])->name('feedback.index');
 
 //=================================== Appointment Routes ============================================================
-    Route::get('/customer/appointments', [AppointmentController::class, 'index'])->name('customer.view');
-    Route::get('/schedule-appointment', [AppointmentController::class, 'create'])->name('customer.appointment');
-    Route::post('/schedule-appointment', [AppointmentController::class, 'store'])->name('customer.appointment.store');
-    Route::get('/payment', [AppointmentController::class, 'showPaymentPage'])->name('customer.payment.view');
-    Route::post('/appointments/{id}/cancel', [AppointmentController::class, 'cancel'])->name('customer.appointment.cancel');
-    Route::get('/available-slots', [AppointmentController::class, 'getAvailableSlots'])->name('customer.available-slots');
-    Route::get('/appointment/check-availability', [AppointmentController::class, 'checkAvailability'])->name('appointment.check-availability');
-    Route::post('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])->name('customer.appointment.reschedule');
+    // Appointment routes
+    Route::get('/appointments', [AppointmentController::class, 'view'])->name('customer.appointments');
+    Route::get('/appointment/create', [AppointmentController::class, 'create'])->name('customer.appointment.create');
+    Route::post('/appointment/store', [AppointmentController::class, 'store'])->name('customer.appointment.store');
+    Route::post('/appointment/confirm-payment', [AppointmentController::class, 'confirmPayment'])->name('customer.appointment.confirm-payment');
+    Route::get('/appointment/slots', [AppointmentController::class, 'getAvailableSlots'])->name('customer.appointment.slots');
+
 
 
   //=========================================== Payment Routes ===================================================
     Route::post('/customer/payment/create', [PaymongoController::class, 'createPayment'])->name('payment.create');
     Route::get('/payment/success', [PaymongoController::class, 'success'])->name('payment.success');
     Route::get('/payment/cancelled', [PaymongoController::class, 'cancelled'])->name('payment.cancelled');
+    
 
 });
  //======================================= Profile Routes =========================================================
