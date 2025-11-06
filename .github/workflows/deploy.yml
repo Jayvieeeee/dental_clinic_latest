@@ -1,4 +1,4 @@
-name: 🚀 Smart Deploy to Hostinger
+name: Smart Deploy to Hostinger
 
 on:
   push:
@@ -7,19 +7,11 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Setup PHP
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: '8.2'
-        
-    - name: Install PHP dependencies
-      run: composer install --no-dev --optimize-autoloader
       
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -27,24 +19,23 @@ jobs:
         node-version: '20'
         cache: 'npm'
         
-    - name: Install npm dependencies and build assets
+    - name: Install and Build
       run: |
         npm ci
         npm run build
-        
-    - name: Optimize Laravel for production
-      run: |
-        php artisan config:cache
-        php artisan route:cache
-        php artisan view:cache
+        # Verify build was successful
+        ls -la public/build/
         
     - name: Create deployment package
       run: |
+        # Create a clean deployment directory
         mkdir -p deployment
+        # Copy only necessary files
         rsync -av \
           --exclude='.git' \
           --exclude='.github' \
           --exclude='node_modules' \
+          --exclude='vendor' \
           --exclude='tests' \
           --exclude='storage/framework/views/*' \
           --exclude='storage/logs/*' \
@@ -57,24 +48,10 @@ jobs:
     - name: Deploy via SFTP
       uses: wlixcc/SFTP-Deploy-Action@v1.2.4
       with:
-        username: ${{ secrets.HOSTINGER_USERNAME }}  
-        server: ${{ secrets.HOSTINGER_HOST }}        
-        ssh_private_key: ${{ secrets.HOSTINGER_PRIVATE_KEY }}
+        username: '${{ secrets.HOSTINGER_USERNAME }}'  
+        server: '${{ secrets.HOSTINGER_HOST }}'        
+        ssh_private_key: '${{ secrets.HOSTINGER_PRIVATE_KEY }}'
         port: '65002'
         local_path: './deployment/' 
         remote_path: './domains/districtsmiles.online/public_html/'
         sftp_only: true
-        
-    - name: Run post-deployment commands via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOSTINGER_HOST }}
-        username: ${{ secrets.HOSTINGER_USERNAME }}
-        password: '\${{ secrets.HOSTINGER_PASSWORD }}'
-        port: 65002
-        script: |
-          cd ~/domains/districtsmiles.online/public_html
-          php artisan migrate --force
-          php artisan storage:link
-          php artisan cache:clear
-          php artisan config:clear
