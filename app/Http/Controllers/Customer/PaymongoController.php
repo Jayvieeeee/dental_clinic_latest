@@ -193,38 +193,53 @@ class PaymongoController extends Controller
     
 public function success(Request $request)
 {
-    Log::info('=== PAYMENT SUCCESS STARTED ===', $request->all());
-    
+    Log::info('=== PAYMENT SUCCESS STARTED ===', [
+        'all_parameters' => $request->all(),
+        'query_params' => $request->query(),
+        'user_id' => Auth::id()
+    ]);
+
     $appointmentId = $request->query('appointment_id');
     $checkoutSessionId = $request->query('checkout_session_id');
     
     if (!$appointmentId) {
         Log::error('No appointment_id in success URL');
-        return redirect()->route('customer.view')->with('error', 'Invalid payment session.');
+        // Let's see what we actually received
+        return response()->json([
+            'error' => 'No appointment ID',
+            'received_parameters' => $request->all(),
+            'query_parameters' => $request->query()
+        ]);
     }
 
-    DB::beginTransaction();
     try {
+        DB::beginTransaction();
+
         // 1. Find the appointment
         $appointment = Appointment::where('appointment_id', $appointmentId)
             ->where('patient_id', Auth::id())
             ->first();
 
         if (!$appointment) {
-            Log::error('Appointment not found', ['appointment_id' => $appointmentId]);
-            return redirect()->route('customer.view')->with('error', 'Appointment not found.');
+            Log::error('Appointment not found in database', [
+                'appointment_id' => $appointmentId,
+                'user_id' => Auth::id(),
+                'all_appointments' => Appointment::where('patient_id', Auth::id())->get()->toArray()
+            ]);
+            throw new \Exception("Appointment {$appointmentId} not found for user " . Auth::id());
         }
 
         Log::info('Found appointment', [
             'appointment_id' => $appointment->appointment_id,
-            'current_status' => $appointment->status
+            'current_status' => $appointment->status,
+            'appointment_date' => $appointment->appointment_date
         ]);
 
         // 2. Update appointment status to confirmed
-        if ($appointment->status === 'pending') {
-            $appointment->update(['status' => 'confirmed']);
-            Log::info('✅ Appointment status updated to confirmed');
-        }
+        $appointment->update([
+            'status' => 'confirmed'
+        ]);
+        Log::info('✅ Appointment status updated to confirmed');
 
         // 3. Create payment record
         $existingPayment = Payment::where('appointment_id', $appointmentId)->first();
@@ -239,25 +254,126 @@ public function success(Request $request)
                 'transaction_reference' => $checkoutSessionId,
                 'paid_at' => now(),
             ]);
-            Log::info('✅ Payment record created', ['payment_id' => $payment->payment_id]);
+            Log::info('✅ Payment record created', [
+                'payment_id' => $payment->payment_id,
+                'payment_method' => $paymentMethod
+            ]);
         }
 
         DB::commit();
-        
-        Log::info('=== PAYMENT SUCCESS COMPLETED ===');
-        return redirect()->route('customer.view')
-            ->with('success', 'Payment completed! Your appointment is confirmed.');
+
+        // 4. Return a SIMPLE success response first
+        return $this->showSimpleSuccessPage($appointment, $payment ?? $existingPayment);
 
     } catch (\Exception $e) {
         DB::rollBack();
         Log::error('Payment success failed', [
             'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
             'appointment_id' => $appointmentId
         ]);
         
-        return redirect()->route('customer.view')
-            ->with('error', 'Payment confirmation failed. Please contact support.');
+        return $this->showSimpleErrorPage($e->getMessage());
     }
+}
+
+/**
+ * Show a simple success page (temporary for testing)
+ */
+private function showSimpleSuccessPage($appointment, $payment)
+{
+    $html = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Successful - District Smiles</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+            .success-box { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+            .success-icon { color: #4CAF50; font-size: 48px; margin-bottom: 20px; }
+            .btn { background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class='success-box'>
+            <div class='success-icon'>✅</div>
+            <h1>Payment Successful!</h1>
+            <p>Your appointment has been confirmed.</p>
+            
+            <div style='text-align: left; margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px;'>
+                <h3>Appointment Details:</h3>
+                <p><strong>Appointment ID:</strong> {$appointment->appointment_id}</p>
+                <p><strong>Date:</strong> {$appointment->appointment_date}</p>
+                <p><strong>Status:</strong> {$appointment->status}</p>
+                <p><strong>Payment Method:</strong> {$payment->payment_method}</p>
+                <p><strong>Amount:</strong> ₱{$payment->amount}</p>
+            </div>
+            
+            <p>You will receive a confirmation email shortly.</p>
+            
+            <a href='https://districtsmiles.online/customer/appointments' class='btn'>
+                View My Appointments
+            </a>
+            
+            <div style='margin-top: 20px; font-size: 12px; color: #666;'>
+                <p>Debug Info: Appointment #{$appointment->appointment_id} confirmed at " . now() . "</p>
+            </div>
+        </div>
+        
+        <script>
+            console.log('Payment Success Debug:');
+            console.log('Appointment ID: {$appointment->appointment_id}');
+            console.log('Status: {$appointment->status}');
+            console.log('Payment ID: {$payment->payment_id}');
+            
+            // Auto-redirect after 5 seconds
+            setTimeout(function() {
+                window.location.href = 'https://districtsmiles.online/customer/appointments';
+            }, 5000);
+        </script>
+    </body>
+    </html>
+    ";
+    
+    return response($html);
+}
+
+/**
+ * Show a simple error page
+ */
+private function showSimpleErrorPage($errorMessage)
+{
+    $html = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Error - District Smiles</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+            .error-box { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+            .error-icon { color: #f44336; font-size: 48px; margin-bottom: 20px; }
+            .btn { background: #f44336; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class='error-box'>
+            <div class='error-icon'>❌</div>
+            <h1>Payment Processing Error</h1>
+            <p>There was an issue confirming your payment.</p>
+            <div style='background: #ffeaea; padding: 15px; border-radius: 5px; margin: 20px 0;'>
+                <strong>Error:</strong> {$errorMessage}
+            </div>
+            <p>Please contact support if this continues.</p>
+            
+            <a href='https://districtsmiles.online/customer/appointments' class='btn'>
+                Back to Appointments
+            </a>
+        </div>
+    </body>
+    </html>
+    ";
+    
+    return response($html);
 }
 
     /**
