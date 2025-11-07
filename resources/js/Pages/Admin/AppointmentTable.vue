@@ -219,7 +219,7 @@ const handleAppointmentCancelled = () => {
           <div class="bg-white rounded-xl shadow-lg p-6 min-w-[400px] border border-gray-100">
             <h3 class="font-bold text-lg mb-4">Appointments Overview</h3>
             <div class="grid grid-cols-2 gap-4 text-sm text-center font-semibold">
-              <div>Total Pending: {{ appointments.totalPending }}</div>
+              <div>Scheduled: {{ appointments.scheduled }}</div>
               <div>Cancelled: {{ appointments.cancelled }}</div>
               <div>Rescheduled: {{ appointments.rescheduled }}</div>
               <div>Completed: {{ appointments.completed }}</div>

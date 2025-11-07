@@ -81,7 +81,8 @@ Route::middleware(['auth'])->group(function () {
 //============================================ Admin Routes =====================================================
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/patients', [PatientController::class, 'index'])->name('patients');
-    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');   
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/dashboard/chart-data', [DashboardController::class, 'getChartData'])->name('dashboard.chart-data');  
 
     //FEEDBACK
     Route::get('/feedback', [AdminFeedbackController::class, 'index'])->name('feedback.index');

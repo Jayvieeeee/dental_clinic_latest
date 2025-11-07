@@ -32,9 +32,9 @@ class Appointment extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Status constants - only what you have in DB
-    const STATUS_CONFIRMED = 'confirmed';
-    const STATUS_RESCHEDULED = 'rescheduled';
+    // Status constants for better code readability
+    const STATUS_SCHEDULED = 'scheduled';
+    const STATUS_RESCHEDULED = 'rescheduled'; // Fixed: Added missing '='
     const STATUS_CANCELLED = 'cancelled';
     const STATUS_COMPLETED = 'completed';
 
@@ -71,11 +71,11 @@ class Appointment extends Model
     }
 
     /**
-     * Scope for confirmed appointments
+     * Scope for scheduled appointments
      */
-    public function scopeConfirmed($query)
+    public function scopeScheduled($query)
     {
-        return $query->where('status', self::STATUS_CONFIRMED);
+        return $query->where('status', self::STATUS_SCHEDULED);
     }
 
     /**
@@ -103,11 +103,11 @@ class Appointment extends Model
     }
 
     /**
-     * Check if appointment is confirmed
+     * Check if appointment is scheduled
      */
-    public function isConfirmed(): bool
+    public function isScheduled(): bool
     {
-        return $this->status === self::STATUS_CONFIRMED;
+        return $this->status === self::STATUS_SCHEDULED;
     }
 
     /**

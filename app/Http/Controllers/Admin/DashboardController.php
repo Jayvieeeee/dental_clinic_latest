@@ -4,294 +4,254 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 use App\Models\Appointment;
 use App\Models\User;
-use App\Models\Service;
+use Inertia\Inertia;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
     public function index()
     {
-        // Get stats for the dashboard - count only users with 'user' role
-        $totalAppointments = Appointment::count();
-        $pendingAppointments = Appointment::where('status', 'pending')->count();
-        $completedAppointments = Appointment::where('status', 'completed')->count();
-        $totalPatients = User::where('role', 'user')->count();
-        
-        // Get today's stats for the main dashboard cards
-        $today = Carbon::today()->toDateString();
+        $today = Carbon::today();
+
+        // Stats data
         $totalAppointmentsToday = Appointment::whereDate('appointment_date', $today)->count();
-        
-        // Get monthly appointment data for charts
-        $monthlyAppointments = $this->getMonthlyAppointments();
-        $serviceDistribution = $this->getServiceDistribution();
-        
-        // Get additional user statistics
-        $userStats = $this->getUserStatistics();
-        
-        // Get upcoming appointments
-        $upcomingAppointments = $this->getUpcomingAppointments();
-        
-        // Get appointment status distribution
-        $appointmentStatusDistribution = $this->getAppointmentStatusDistribution();
+        $patientsRegistered = User::where('role', 'user')->count();
+        $pendingAppointments = Appointment::where('status', 'confirmed')
+            ->whereDate('appointment_date', '>=', $today)
+            ->count();
 
-        return Inertia::render('Admin/Dashboard', [
-            'stats' => [
-                'totalAppointments' => $totalAppointments,
-                'pendingAppointments' => $pendingAppointments,
-                'completedAppointments' => $completedAppointments,
-                'totalPatients' => $totalPatients,
-                'totalAppointmentsToday' => $totalAppointmentsToday,
-                'totalUsers' => $userStats['totalUsers'],
-                'newUsersThisMonth' => $userStats['newUsersThisMonth'],
-                'userGrowth' => $userStats['userGrowth'],
-            ],
-            'chartData' => [
-                'monthlyAppointments' => $monthlyAppointments,
-                'serviceDistribution' => $serviceDistribution,
-                'userRegistrations' => $userStats['monthlyRegistrations'],
-                'appointmentStatus' => $appointmentStatusDistribution,
-            ],
-            'upcomingAppointments' => $upcomingAppointments
-        ]);
-    }
+        // Weekly appointments data for chart
+        $weekStart = $today->copy()->startOfWeek();
+        $weekEnd = $today->copy()->endOfWeek();
+        
+        $weeklyAppointments = Appointment::whereBetween('appointment_date', [$weekStart, $weekEnd])
+            ->selectRaw('DAYNAME(appointment_date) as day, COUNT(*) as count')
+            ->groupBy('day')
+            ->get()
+            ->keyBy('day');
 
-    private function getMonthlyAppointments()
-    {
-        $appointments = Appointment::selectRaw('
-            YEAR(created_at) as year, 
-            MONTH(created_at) as month, 
-            COUNT(*) as count
-        ')
-        ->where('created_at', '>=', now()->subMonths(6))
-        ->groupBy('year', 'month')
-        ->orderBy('year', 'asc')
-        ->orderBy('month', 'asc')
-        ->get();
+        // Map to match your frontend structure
+        $appointmentsData = [
+            'Monday' => 0,
+            'Tuesday' => 0,
+            'Wednesday' => 0,
+            'Thursday' => 0,
+            'Friday' => 0,
+            'Saturday' => 0,
+            'Sunday' => 0,
+        ];
 
-        $labels = [];
-        $data = [];
-
-        foreach ($appointments as $appointment) {
-            $date = Carbon::create($appointment->year, $appointment->month);
-            $labels[] = $date->format('M Y');
-            $data[] = $appointment->count;
+        foreach ($weeklyAppointments as $day => $data) {
+            $appointmentsData[$day] = $data->count;
         }
 
-        return [
-            'labels' => $labels,
-            'data' => $data
+        // Format for frontend
+        $formattedAppointmentsData = [
+            ['day' => 'Mon', 'value' => $appointmentsData['Monday']],
+            ['day' => 'Tue', 'value' => $appointmentsData['Tuesday']],
+            ['day' => 'Wed', 'value' => $appointmentsData['Wednesday']],
+            ['day' => 'Thurs', 'value' => $appointmentsData['Thursday']],
+            ['day' => 'Fri', 'value' => $appointmentsData['Friday']],
+            ['day' => 'Sat', 'value' => $appointmentsData['Saturday']],
+            ['day' => 'Sun', 'value' => $appointmentsData['Sunday']],
         ];
-    }
 
-    private function getServiceDistribution()
-    {
-        // Fixed: Using service_name instead of name
-        $distribution = Appointment::selectRaw('
-            services.service_name as service_name,
-            COUNT(appointments.appointment_id) as appointment_count
-        ')
-        ->join('services', 'appointments.service_id', '=', 'services.service_id')
-        ->groupBy('services.service_id', 'services.service_name')
-        ->orderBy('appointment_count', 'desc')
-        ->limit(5)
-        ->get();
-
-        $labels = $distribution->pluck('service_name')->toArray();
-        $data = $distribution->pluck('appointment_count')->toArray();
-
-        return [
-            'labels' => $labels,
-            'data' => $data
-        ];
-    }
-
-    private function getUserStatistics()
-    {
-        // Total users with 'user' role
-        $totalUsers = User::where('role', 'user')->count();
+        // Appointment Status data
+        $totalAppointments = Appointment::count();
         
-        // New users this month (with 'user' role)
-        $newUsersThisMonth = User::where('role', 'user')
-            ->whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year)
-            ->count();
+        if ($totalAppointments > 0) {
+            $completedCount = Appointment::where('status', 'completed')->count();
+            $confirmedCount = Appointment::where('status', 'confirmed')->count();
+            $rescheduledCount = Appointment::where('status', 'rescheduled')->count();
+            $cancelledCount = Appointment::where('status', 'cancelled')->count();
             
-        // Users from previous month (for growth calculation)
-        $previousMonthUsers = User::where('role', 'user')
-            ->whereMonth('created_at', now()->subMonth()->month)
-            ->whereYear('created_at', now()->subMonth()->year)
-            ->count();
-            
-        // Calculate growth percentage
-        $userGrowth = $previousMonthUsers > 0 
-            ? round((($newUsersThisMonth - $previousMonthUsers) / $previousMonthUsers) * 100, 2)
-            : ($newUsersThisMonth > 0 ? 100 : 0);
-            
-        // Monthly user registrations for chart (last 6 months)
-        $monthlyRegistrations = $this->getMonthlyUserRegistrations();
-
-        return [
-            'totalUsers' => $totalUsers,
-            'newUsersThisMonth' => $newUsersThisMonth,
-            'userGrowth' => $userGrowth,
-            'monthlyRegistrations' => $monthlyRegistrations
-        ];
-    }
-
-    private function getMonthlyUserRegistrations()
-    {
-        $users = User::where('role', 'user')
-            ->selectRaw('
-                YEAR(created_at) as year, 
-                MONTH(created_at) as month, 
-                COUNT(*) as count
-            ')
-            ->where('created_at', '>=', now()->subMonths(6))
-            ->groupBy('year', 'month')
-            ->orderBy('year', 'asc')
-            ->orderBy('month', 'asc')
-            ->get();
-
-        $labels = [];
-        $data = [];
-
-        foreach ($users as $user) {
-            $date = Carbon::create($user->year, $user->month);
-            $labels[] = $date->format('M Y');
-            $data[] = $user->count;
+            $appointmentStatus = [
+                [
+                    'label' => 'Completed',
+                    'percentage' => round(($completedCount / $totalAppointments) * 100),
+                    'color' => 'bg-green-500'
+                ],
+                [
+                    'label' => 'Scheduled',
+                    'percentage' => round(($confirmedCount / $totalAppointments) * 100),
+                    'color' => 'bg-teal-500'
+                ],
+                [
+                    'label' => 'Rescheduled',
+                    'percentage' => round(($rescheduledCount / $totalAppointments) * 100),
+                    'color' => 'bg-blue-500'
+                ],
+                [
+                    'label' => 'Cancelled',
+                    'percentage' => round(($cancelledCount / $totalAppointments) * 100),
+                    'color' => 'bg-red-500'
+                ],
+            ];
+        } else {
+            $appointmentStatus = [
+                ['label' => 'Completed', 'percentage' => 0, 'color' => 'bg-green-500'],
+                ['label' => 'Scheduled', 'percentage' => 0, 'color' => 'bg-teal-500'],
+                ['label' => 'Rescheduled', 'percentage' => 0, 'color' => 'bg-blue-500'],
+                ['label' => 'Cancelled', 'percentage' => 0, 'color' => 'bg-red-500'],
+            ];
         }
 
-        return [
-            'labels' => $labels,
-            'data' => $data
-        ];
-    }
-
-    private function getUpcomingAppointments()
-    {
-        $today = Carbon::today()->toDateString();
-        
-        return Appointment::with(['patient', 'service'])
-            ->where('appointment_date', '>=', $today)
-            ->whereIn('status', ['scheduled', 'pending'])
+        // Upcoming appointments (next 7 days)
+        $upcomingAppointments = Appointment::with(['patient', 'service', 'schedule'])
+            ->where('status', 'confirmed')
+            ->whereDate('appointment_date', '>=', $today)
+            ->whereDate('appointment_date', '<=', $today->copy()->addDays(7))
             ->orderBy('appointment_date', 'asc')
-            ->orderBy('created_at', 'asc')
+            ->orderBy('schedule_id', 'asc')
             ->limit(5)
             ->get()
             ->map(function ($appointment) {
+                $patient = $appointment->patient;
+                $service = $appointment->service;
+                $schedule = $appointment->schedule;
+
                 return [
-                    'appointment_id' => $appointment->appointment_id,
-                    'patient_name' => $appointment->patient->name ?? 'Unknown',
-                    'service_name' => $appointment->service->service_name ?? 'Unknown',
-                    'appointment_date' => $appointment->appointment_date->format('Y-m-d'),
-                    'status' => $appointment->status,
+                    'id' => $appointment->appointment_id,
+                    'name' => trim(($patient->first_name ?? '') . ' ' . ($patient->last_name ?? '')),
+                    'procedure' => $service->service_name ?? 'N/A',
+                    'dateTime' => $appointment->appointment_date->format('m-d-Y') . "\n" . 
+                                 ($schedule->time_slot ?? 'Time not set')
                 ];
             });
-    }
 
-    private function getAppointmentStatusDistribution()
-    {
-        $statuses = Appointment::selectRaw('status, COUNT(*) as count')
-            ->groupBy('status')
-            ->get();
-
-        $labels = $statuses->pluck('status')->toArray();
-        $data = $statuses->pluck('count')->toArray();
-
-        return [
-            'labels' => $labels,
-            'data' => $data
-        ];
-    }
-
-    /**
-     * Get dashboard statistics for the main cards (like your original design)
-     */
-    public function getDashboardStats()
-    {
-        $today = Carbon::today()->toDateString();
-        
-        // Total Appointments (Today) - like your original "10"
-        $totalAppointmentsToday = Appointment::whereDate('appointment_date', $today)->count();
-        
-        // Patients Registered - like your original "34"
-        $totalPatients = User::where('role', 'user')->count();
-        
-        // Pending Appointments - like your original "25"
-        $pendingAppointments = Appointment::where('status', 'pending')->count();
-        
-        // Total Value - like your original "85" (you can customize this logic)
-        $totalValue = Appointment::where('status', 'completed')->count();
-        
-        // Upcoming Scheduled Appointments
-        $upcomingAppointments = $this->getFormattedUpcomingAppointments();
-        
-        // Appointment Status Percentages
-        $statusPercentages = $this->getStatusPercentages();
-
-        return response()->json([
-            'totalAppointmentsToday' => $totalAppointmentsToday,
-            'totalPatients' => $totalPatients,
-            'pendingAppointments' => $pendingAppointments,
-            'totalValue' => $totalValue,
+        return Inertia::render('Admin/Dashboard', [
+            'stats' => [
+                'totalAppointments' => $totalAppointmentsToday,
+                'patientsRegistered' => $patientsRegistered,
+                'pendingAppointments' => $pendingAppointments,
+            ],
+            'appointmentsData' => $formattedAppointmentsData,
+            'appointmentStatus' => $appointmentStatus,
             'upcomingAppointments' => $upcomingAppointments,
-            'statusPercentages' => $statusPercentages
+            'currentDate' => [
+                'dayName' => $today->format('l'),
+                'fullDate' => $today->format('F j, Y')
+            ]
         ]);
     }
 
-    private function getFormattedUpcomingAppointments()
+    public function getChartData(Request $request)
     {
-        $today = Carbon::today()->toDateString();
-        
-        return Appointment::with(['patient', 'service'])
-            ->where('appointment_date', '>=', $today)
-            ->whereIn('status', ['scheduled', 'pending'])
-            ->orderBy('appointment_date', 'asc')
-            ->orderBy('created_at', 'asc')
-            ->limit(3)
-            ->get()
-            ->map(function ($appointment) {
-                return [
-                    'name' => $appointment->patient->name ?? 'Unknown',
-                    'procedure_type' => $appointment->service->service_name ?? 'Unknown',
-                    'date_time' => $appointment->appointment_date->format('m-d-Y') . ' ' . $this->getTimeFromSchedule($appointment),
-                ];
-            });
-    }
+        $request->validate([
+            'period' => 'required|in:Daily,Weekly,Monthly,Yearly'
+        ]);
 
-    private function getTimeFromSchedule($appointment)
-    {
-        // If you have schedule data, you can format the time here
-        // For now, return a placeholder or get from schedule relationship
-        if ($appointment->schedule) {
-            return $appointment->schedule->start_time . ' - ' . $appointment->schedule->end_time;
-        }
-        
-        return '10:00 a.m - 1:00 p.m'; // Default placeholder
-    }
+        $period = $request->period;
+        $today = Carbon::today();
 
-    private function getStatusPercentages()
-    {
-        $statuses = Appointment::selectRaw('status, COUNT(*) as count')
-            ->groupBy('status')
-            ->get();
-
-        $totalAppointments = Appointment::count();
-        $percentages = [];
-
-        // Define the statuses you want to show
-        $desiredStatuses = ['completed', 'scheduled', 'rescheduled', 'cancelled', 'no_show'];
-
-        foreach ($desiredStatuses as $status) {
-            $statusData = $statuses->where('status', $status)->first();
-            $count = $statusData ? $statusData->count : 0;
-            $percentage = $totalAppointments > 0 ? round(($count / $totalAppointments) * 100) : 0;
-            $percentages[$status] = $percentage;
+        switch ($period) {
+            case 'Daily':
+                $data = $this->getDailyData($today);
+                break;
+            case 'Weekly':
+                $data = $this->getWeeklyData($today);
+                break;
+            case 'Monthly':
+                $data = $this->getMonthlyData($today);
+                break;
+            case 'Yearly':
+                $data = $this->getYearlyData($today);
+                break;
+            default:
+                $data = $this->getWeeklyData($today);
         }
 
-        return $percentages;
+        return response()->json($data);
+    }
+
+    private function getDailyData($today)
+    {
+        $hours = [];
+        for ($i = 0; $i < 24; $i++) {
+            $hourStart = $today->copy()->setTime($i, 0, 0);
+            $hourEnd = $today->copy()->setTime($i, 59, 59);
+            
+            $count = Appointment::whereBetween('created_at', [$hourStart, $hourEnd])->count();
+            
+            $hours[] = [
+                'hour' => $hourStart->format('g A'),
+                'value' => $count
+            ];
+        }
+
+        return $hours;
+    }
+
+    private function getWeeklyData($today)
+    {
+        $weekStart = $today->copy()->startOfWeek();
+        
+        $days = [];
+        $dayNames = ['Mon', 'Tue', 'Wed', 'Thurs', 'Fri', 'Sat', 'Sun'];
+        
+        for ($i = 0; $i < 7; $i++) {
+            $currentDay = $weekStart->copy()->addDays($i);
+            
+            $count = Appointment::whereDate('appointment_date', $currentDay)->count();
+            
+            $days[] = [
+                'day' => $dayNames[$i],
+                'value' => $count
+            ];
+        }
+
+        return $days;
+    }
+
+    private function getMonthlyData($today)
+    {
+        $monthStart = $today->copy()->startOfMonth();
+        $monthEnd = $today->copy()->endOfMonth();
+        
+        $weeks = [];
+        $currentWeek = $monthStart->copy();
+        
+        while ($currentWeek <= $monthEnd) {
+            $weekEnd = $currentWeek->copy()->endOfWeek();
+            if ($weekEnd > $monthEnd) {
+                $weekEnd = $monthEnd;
+            }
+            
+            $count = Appointment::whereBetween('appointment_date', [$currentWeek, $weekEnd])->count();
+            
+            $weeks[] = [
+                'week' => 'Week ' . (count($weeks) + 1),
+                'value' => $count
+            ];
+            
+            $currentWeek = $weekEnd->copy()->addDay();
+        }
+
+        return $weeks;
+    }
+
+    private function getYearlyData($today)
+    {
+        $yearStart = $today->copy()->startOfYear();
+        
+        $months = [];
+        $monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        
+        for ($i = 0; $i < 12; $i++) {
+            $currentMonth = $yearStart->copy()->addMonths($i);
+            $monthStart = $currentMonth->copy()->startOfMonth();
+            $monthEnd = $currentMonth->copy()->endOfMonth();
+            
+            $count = Appointment::whereBetween('appointment_date', [$monthStart, $monthEnd])->count();
+            
+            $months[] = [
+                'month' => $monthNames[$i],
+                'value' => $count
+            ];
+        }
+
+        return $months;
     }
 }

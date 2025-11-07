@@ -39,7 +39,7 @@ class AdminAppointmentController extends Controller
                         : 'N/A',
                     'time'      => $schedule?->time_slot ?? null,
                     'status'    => ucfirst($apt->status ?? 'confirmed'),
-                    'payment'   => $payment?->payment_status ?? 'Pending', 
+                    'payment'   => $payment?->payment_status ?? 'Paid', 
                     'day'       => strtoupper(optional($apt->appointment_date)->format('D')),
                     'date' => optional($apt->appointment_date)->timezone('Asia/Manila')->format('Y-m-d'),
                     'schedule_id' => $apt->schedule_id,
@@ -58,7 +58,7 @@ class AdminAppointmentController extends Controller
             ->toArray();
 
         $stats = [
-            'totalConfirmed' => Appointment::where('status', 'confirmed')->count(),
+            'scheduled' => Appointment::where('status', 'scheduled')->count(),
             'rescheduled'    => Appointment::where('status', 'rescheduled')->count(),
             'cancelled'      => Appointment::where('status', 'cancelled')->count(),
             'completed'      => Appointment::where('status', 'completed')->count(),

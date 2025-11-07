@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\AppointmentReminder;
 use App\Models\User;
-use App\Models\Payment; 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 
 class AppointmentController extends Controller
@@ -31,23 +31,39 @@ class AppointmentController extends Controller
         $appointments = Appointment::with(['service', 'schedule', 'payment'])
             ->where('patient_id', $userId)
             ->orderBy('appointment_date', 'desc')
+            ->orderBy('schedule_datetime', 'desc')
             ->get()
             ->map(function ($appointment) {
+                $serviceName = optional($appointment->service)->service_name ?? 'Service Deleted'; 
+                $timeSlot = optional($appointment->schedule)->start_time && optional($appointment->schedule)->end_time ? 
+                    Carbon::parse($appointment->schedule->start_time)->format('g:i A') . ' - ' . 
+                    Carbon::parse($appointment->schedule->end_time)->format('g:i A') : 
+                    'N/A';
+
                 // Get payment status from the related Payment model
-                $paymentStatus = optional(optional($appointment->payment)->payment_status)->ucfirst() ?? 
-                                 (in_array($appointment->status, ['Cancelled', 'Completed']) ? 'N/A' : 'Pending Payment');
+                $paymentStatus = optional($appointment->payment)->payment_status 
+                    ? ucfirst($appointment->payment->payment_status)
+                    : (in_array(strtolower($appointment->status), ['cancelled', 'completed']) ? 'N/A' : 'Paid');
+
+                // FIXED: Only allow cancel/reschedule for Scheduled appointments
+                $canModify = $appointment->isScheduled();
 
                 return [
-                    'id' => $appointment->appointment_id,
-                    'date_raw' => optional($appointment->appointment_date)->format('Y-m-d') ?? 'N/A',
+                    'appointment_id' => $appointment->appointment_id,
+                    'service_name' => $serviceName,
+                    'appointment_date' => $appointment->appointment_date,
+                    'schedule_datetime' => $appointment->schedule_datetime,
                     'schedule_id' => $appointment->schedule_id,
-                    'procedure' => $appointment->service->service_name ?? 'N/A',
-                    'date' => optional($appointment->appointment_date)->format('m-d-Y') ?? 'N/A',
-                    'time' => $appointment->schedule 
-                        ? date('g:i a', strtotime($appointment->schedule->start_time)) . 
-                          ' - ' . date('g:i a', strtotime($appointment->schedule->end_time))
-                        : 'N/A',
-                    'status' => ucfirst($appointment->status),
+                    'status' => ucfirst(strtolower($appointment->status)),
+                    'formatted_date' => Carbon::parse($appointment->appointment_date)->format('F j, Y'),
+                    'formatted_time' => $timeSlot,
+                    // FIXED: Only Scheduled appointments can be cancelled or rescheduled
+                    'can_cancel' => $canModify,
+                    'can_reschedule' => $canModify, 
+                    'is_scheduled' => $appointment->isScheduled(),
+                    'is_completed' => $appointment->isCompleted(),
+                    'is_cancelled' => $appointment->isCancelled(),
+                    'is_rescheduled' => $appointment->isRescheduled(),
                     'payment_status' => $paymentStatus,
                 ];
             });
@@ -84,81 +100,92 @@ class AppointmentController extends Controller
         ]);
     }
 
-   /**
-    * Store the appointment - REMOVED HOLDING TIME AND ALLOW MULTIPLE APPOINTMENTS
-    */
+/**
+ * Store the appointment - ULTRA FIXED DOUBLE BOOKING PREVENTION
+ */
 public function store(Request $request)
 {
-    Log::info('=== APPOINTMENT STORE STARTED ===', $request->all());
+    DB::beginTransaction();
 
-    $validated = $request->validate([
-        'service_id' => 'required|exists:services,service_id',
-        'schedule_id' => 'required|exists:schedules,schedule_id',
-        'appointment_date' => 'required|date|after:today',
-    ]);
+    try {
+        $validated = $request->validate([
+            'patient_id' => 'required|exists:patients,id',
+            'service_id' => 'required|exists:services,id',
+            'schedule_id' => 'required|exists:schedules,id',
+            'appointment_date' => 'required|date|after_or_equal:today',
+        ]);
 
-    return DB::transaction(function () use ($validated) {
-        // Check if appointment date is at least 1 day in advance
-        $appointmentDate = Carbon::parse($validated['appointment_date']);
-        $today = Carbon::today();
-        
-        if ($appointmentDate->lte($today)) {
-            return back()->withErrors([
-                'error' => 'Appointments must be scheduled at least 1 day in advance. Please choose a future date.'
-            ]);
-        }
+        $schedule = Schedule::findOrFail($validated['schedule_id']);
+        $scheduleDateTime = Carbon::parse($validated['appointment_date'])
+            ->setTimeFromTimeString($schedule->start_time);
 
-        // CRITICAL: Check if the time slot is already booked by ANY user
-        $isAlreadyBooked = Appointment::where('schedule_id', $validated['schedule_id'])
+        // ✅ Check again inside transaction (atomic)
+        $isTaken = Appointment::lockForUpdate()
+            ->where('schedule_id', $validated['schedule_id'])
             ->whereDate('appointment_date', $validated['appointment_date'])
-            ->where('status', 'Scheduled')
             ->exists();
 
-        if ($isAlreadyBooked) {
-            return back()->withErrors([
-                'error' => 'This time slot is already booked. Please choose another time.'
-            ]);
+        if ($isTaken) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Sorry, this time slot has just been taken. Please choose another one.',
+            ], 409);
         }
 
-        // Get the schedule to create proper datetime
-        $schedule = Schedule::find($validated['schedule_id']);
-        
-        // Use start_time for schedule_datetime field
-        $scheduleDateTime = Carbon::parse($validated['appointment_date'])->setTimeFromTimeString($schedule->start_time);
-        
-        // Get service for price
-        $service = Service::find($validated['service_id']);
-        $amount = $service->price ?? 300.00;
-
-        // Create the appointment
+        // ✅ Proceed with booking
         $appointment = Appointment::create([
-            'patient_id' => Auth::id(),
+            'patient_id' => $validated['patient_id'],
             'service_id' => $validated['service_id'],
             'schedule_id' => $validated['schedule_id'],
             'appointment_date' => $validated['appointment_date'],
             'schedule_datetime' => $scheduleDateTime,
-            'status' => 'Scheduled',
+            'status' => 'pending',
         ]);
 
-        // Create payment record immediately
-        $payment = Payment::create([
-            'appointment_id' => $appointment->appointment_id,
-            'amount' => $amount,
-            'payment_status' => 'paid',
-            'payment_method' => 'cash',
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Appointment booked successfully!',
+            'data' => $appointment,
         ]);
 
-        Log::info('✅ Appointment created successfully', [
-            'appointment_id' => $appointment->appointment_id,
-            'user_id' => Auth::id(),
-            'status' => 'Scheduled'
+    } catch (QueryException $e) {
+        DB::rollBack();
+
+        // ✅ Duplicate slot (MySQL 1062)
+        if ($e->errorInfo[1] === 1062) {
+            return response()->json([
+                'success' => false,
+                'message' => 'That time slot is no longer available. Please pick another one.',
+            ], 409);
+        }
+
+        Log::error('DB Error during booking', [
+            'error' => $e->getMessage(),
+            'sql' => $e->getSql(),
+            'bindings' => $e->getBindings(),
         ]);
 
-        return redirect()
-            ->route('customer.view')
-            ->with('success', 'Appointment booked successfully!');
-    });
+        return response()->json([
+            'success' => false,
+            'message' => 'Database error while booking appointment.',
+        ], 500);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        Log::error('Unexpected booking error', ['error' => $e->getMessage()]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Something went wrong while processing your request.',
+        ], 500);
+    }
 }
+
+
 
     /**
      * Show payment page (SIMPLIFIED - No pending session checks)
@@ -168,7 +195,7 @@ public function store(Request $request)
         // Get the latest appointment for the user that might need payment
         $appointment = Appointment::with(['service', 'schedule', 'payment'])
             ->where('patient_id', Auth::id())
-            ->where('status', 'Scheduled')
+            ->where('status', Appointment::STATUS_SCHEDULED)
             ->orderBy('created_at', 'desc')
             ->first();
 
@@ -213,23 +240,28 @@ public function store(Request $request)
                     'N/A';
 
                 // Get payment status from the related Payment model
-                $paymentStatus = optional(optional($appointment->payment)->payment_status)->ucfirst() ?? 'Pending Payment';
+                $paymentStatus = optional($appointment->payment)->payment_status 
+                    ? ucfirst($appointment->payment->payment_status)
+                    : 'Paid';
+
+                // FIXED: Only allow cancel/reschedule for Scheduled appointments
+                $canModify = $appointment->isScheduled();
 
                 return [
                     'appointment_id' => $appointment->appointment_id,
                     'service_name' => $serviceName,
                     'appointment_date' => $appointment->appointment_date,
                     'schedule_datetime' => $appointment->schedule_datetime,
-                    'status' => $appointment->status,
+                    'status' => ucfirst(strtolower($appointment->status)),
                     'formatted_date' => Carbon::parse($appointment->appointment_date)->format('F j, Y'),
                     'formatted_time' => $timeSlot,
-                    // Check logic for reschedule/cancel based on status
-                    'can_cancel' => $appointment->status === 'Scheduled',
-                    'can_reschedule' => $appointment->status === 'Scheduled', 
-                    'is_scheduled' => $appointment->status === 'Scheduled',
-                    'is_completed' => $appointment->status === 'Completed',
-                    'is_cancelled' => $appointment->status === 'Cancelled',
-                    'is_rescheduled' => $appointment->status === 'Rescheduled',
+                    // FIXED: Only Scheduled appointments can be cancelled or rescheduled
+                    'can_cancel' => $canModify,
+                    'can_reschedule' => $canModify, 
+                    'is_scheduled' => $appointment->isScheduled(),
+                    'is_completed' => $appointment->isCompleted(),
+                    'is_cancelled' => $appointment->isCancelled(),
+                    'is_rescheduled' => $appointment->isRescheduled(),
                     'payment_status' => $paymentStatus,
                 ];
             });
@@ -245,7 +277,7 @@ public function store(Request $request)
     }
 
     /**
-     * Cancel an appointment 
+     * Cancel an appointment - FIXED
      */
     public function cancel(Request $request, $id)
     {
@@ -253,25 +285,30 @@ public function store(Request $request)
             $appointment = Appointment::with('schedule')
                 ->where('appointment_id', $id)
                 ->where('patient_id', Auth::id())
+                ->lockForUpdate()
                 ->first();
 
             if (!$appointment) {
                 return back()->with('error', 'Appointment not found.');
             }
 
-            // Only allow cancellation of 'Scheduled' appointments
-            if ($appointment->status !== 'Scheduled') {
+            // FIXED: Use model method for status checking
+            if (!$appointment->isScheduled()) {
                 return back()->with('error', 'Only scheduled appointments can be cancelled.');
             }
             
             // Update appointment status to Cancelled
             $appointment->update([
-                'status' => 'Cancelled',
+                'status' => Appointment::STATUS_CANCELLED,
             ]);
+
+            // Clear caches to make the time slot available again
+            $this->clearAvailabilityCaches($appointment->appointment_date);
 
             Log::info('Appointment cancelled', [
                 'appointment_id' => $appointment->appointment_id,
                 'user_id' => Auth::id(),
+                'old_date' => $appointment->appointment_date
             ]);
 
             return redirect()
@@ -281,7 +318,7 @@ public function store(Request $request)
     }
 
     /**
-     * Reschedule an appointment 
+     * Reschedule an appointment - FIXED
      */
     public function reschedule(Request $request, $id)
     {
@@ -302,21 +339,24 @@ public function store(Request $request)
             $appointment = Appointment::with('schedule')
                 ->where('appointment_id', $id)
                 ->where('patient_id', Auth::id())
+                ->lockForUpdate()
                 ->first();
 
             if (!$appointment) {
                 return back()->with('error', 'Appointment not found.');
             }
 
-            if ($appointment->status !== 'Scheduled') {
+            // FIXED: Use model method for status checking
+            if (!$appointment->isScheduled()) {
                 return back()->with('error', 'Only scheduled appointments can be rescheduled.');
             }
 
-            // Check if the NEW slot is already booked by someone else
+            // FIXED: Use model constants for status checking
             $isAlreadyBooked = Appointment::where('schedule_id', $validated['new_schedule_id'])
                 ->whereDate('appointment_date', $validated['new_appointment_date'])
-                ->where('status', 'Scheduled')
+                ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_COMPLETED])
                 ->where('appointment_id', '!=', $id)
+                ->lockForUpdate()
                 ->exists();
 
             if ($isAlreadyBooked) {
@@ -325,22 +365,37 @@ public function store(Request $request)
 
             $newSchedule = Schedule::find($validated['new_schedule_id']);
 
-            $newScheduleDateTime = Carbon::parse(
-                $validated['new_appointment_date'] . ' ' . $newSchedule->start_time
-            );
+            if (!$newSchedule) {
+                return back()->withErrors([
+                    'error' => 'Selected schedule not found. Please try again.'
+                ]);
+            }
+
+            // Parse the date and set time from the schedule's start_time
+            $newScheduleDateTime = Carbon::parse($validated['new_appointment_date'])
+                ->setTimeFromTimeString($newSchedule->start_time);
             
-            // Update appointment record with Rescheduled status
+            // Store old date for cache clearing
+            $oldAppointmentDate = $appointment->appointment_date;
+            
+            // FIXED: Use model constant
             $appointment->update([
                 'schedule_id'       => $validated['new_schedule_id'],
                 'appointment_date'  => $validated['new_appointment_date'],
                 'schedule_datetime' => $newScheduleDateTime,
-                'status'            => 'Rescheduled',
+                'status'            => Appointment::STATUS_RESCHEDULED,
             ]);
+
+            // Clear caches for both old and new dates
+            $this->clearAvailabilityCaches($oldAppointmentDate);
+            $this->clearAvailabilityCaches($validated['new_appointment_date']);
 
             Log::info('Appointment rescheduled successfully', [
                 'appointment_id' => $appointment->appointment_id,
                 'user_id' => Auth::id(),
-                'new_status' => 'Rescheduled'
+                'old_date' => $oldAppointmentDate,
+                'new_date' => $validated['new_appointment_date'],
+                'status' => Appointment::STATUS_SCHEDULED
             ]);
 
             return redirect()
@@ -349,55 +404,105 @@ public function store(Request $request)
         });
     }
 
-    /**
-     * Get available time slots for a specific date
-     */
-    public function getAvailableSlots(Request $request)
-    {
-        $userId = Auth::id();
-        $request->validate([
-            'date' => 'required|date|after:today',
+/**
+ * Get available time slots for a specific date - FIXED RACE CONDITION
+ */
+public function getAvailableSlots(Request $request)
+{
+    $request->validate([
+        'date' => 'required|date|after:today',
+    ]);
+
+    $date = Carbon::parse($request->query('date'))->toDateString();
+
+    // Check if date is at least 1 day in advance
+    $today = Carbon::today();
+    $selectedDate = Carbon::parse($date);
+    
+    if ($selectedDate->lte($today)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Appointments must be scheduled at least 1 day in advance.',
+            'available_slots' => []
+        ], 422);
+    }
+
+    // Check if date is a Sunday or Monday (clinic closed)
+    $dayOfWeek = $selectedDate->dayOfWeek;
+    if ($dayOfWeek === 0 || $dayOfWeek === 1) { // 0 = Sunday, 1 = Monday
+        return response()->json([
+            'success' => false,
+            'message' => 'Clinic is closed on Sundays and Mondays.',
+            'available_slots' => []
+        ], 422);
+    }
+
+    // Check if date is a holiday
+    $philippineHolidays = [
+        // 2025 Regular Holidays
+        "2025-01-01", "2025-04-17", "2025-04-18", "2025-04-19", "2025-04-20", 
+        "2025-04-09", "2025-05-01", "2025-06-12", "2025-08-21", "2025-08-25", 
+        "2025-11-01", "2025-11-30", "2025-12-25", "2025-12-30", "2025-12-31",
+        // 2025 Special Non-Working Holidays
+        "2025-01-29", "2025-02-25", "2025-03-01", "2025-03-31", "2025-11-02", 
+        "2025-12-08", "2025-12-24",
+        // 2026 Regular Holidays
+        "2026-01-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", 
+        "2026-04-09", "2026-05-01", "2026-06-12", "2026-08-21", "2026-08-31", 
+        "2026-11-01", "2026-11-30", "2026-12-25", "2026-12-30", "2026-12-31",
+        // 2026 Special Non-Working Holidays
+        "2026-02-17", "2026-02-25", "2026-02-18", "2026-03-20", "2026-11-02", 
+        "2026-12-08", "2026-12-24"
+    ];
+
+    if (in_array($date, $philippineHolidays)) {
+        $holidayName = $this->getHolidayName($date);
+        return response()->json([
+            'success' => false,
+            'message' => $holidayName ? "Clinic closed for {$holidayName}" : "Clinic closed for holiday",
+            'available_slots' => []
+        ], 422);
+    }
+
+    // Use shorter cache time and include timestamp for real-time updates
+    $cacheKey = "available_slots:{$date}:" . Carbon::now()->format('Y-m-d_H');
+    $cachedSlots = Cache::get($cacheKey);
+    
+    if ($cachedSlots) {
+        return response()->json([
+            'success' => true,
+            'available_slots' => $cachedSlots,
+            'date' => $date,
+            'cached' => true,
+            'cache_key' => $cacheKey
         ]);
-
-        $date = Carbon::parse($request->query('date'))->toDateString();
-
-        // Check if date is at least 1 day in advance
-        $today = Carbon::today();
-        $selectedDate = Carbon::parse($date);
-        
-        if ($selectedDate->lte($today)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Appointments must be scheduled at least 1 day in advance.',
-                'available_slots' => []
-            ], 422);
-        }
-
-        $cacheKey = "available_slots:{$date}";
-        $cachedSlots = Cache::get($cacheKey);
-        
-        if ($cachedSlots) {
-            return response()->json([
-                'success' => true,
-                'available_slots' => $cachedSlots,
-                'date' => $date,
-                'cached' => true
-            ]);
-        }
-        
-        // Only check Scheduled appointments (no pending/holding time)
-        $availableSlots = Schedule::leftJoin('appointments', function($join) use ($date) {
-                $join->on('schedules.schedule_id', '=', 'appointments.schedule_id')
-                    ->whereDate('appointments.appointment_date', $date)
-                    ->where('appointments.status', 'Scheduled');
-            })
-            ->select(
-                'schedules.schedule_id',
-                'schedules.start_time',
-                'schedules.end_time',
-                DB::raw('appointments.schedule_id IS NOT NULL as is_booked')
+    }
+    
+    // Use database lock to prevent race conditions during the query
+    $availableSlots = DB::transaction(function () use ($date) {
+        // Get all active schedules
+        $allSchedules = Schedule::select(
+                'schedule_id',
+                'start_time',
+                'end_time'
             )
-            ->get()
+            ->orderBy('start_time', 'asc')
+            ->get();
+
+        // Get taken schedule IDs for this date with lock
+        $takenScheduleIds = Appointment::whereDate('appointment_date', $date)
+            ->whereNotIn('status', [
+                Appointment::STATUS_CANCELLED, 
+                Appointment::STATUS_COMPLETED
+            ])
+            ->lockForUpdate() // Prevent other transactions from reading until this completes
+            ->pluck('schedule_id')
+            ->toArray();
+
+        // Filter out taken schedules
+        return $allSchedules->filter(function ($schedule) use ($takenScheduleIds) {
+                return !in_array($schedule->schedule_id, $takenScheduleIds);
+            })
             ->map(function ($schedule) {
                 return [
                     'schedule_id' => $schedule->schedule_id,
@@ -405,23 +510,87 @@ public function store(Request $request)
                     'end_time' => $schedule->end_time,
                     'display_time' => Carbon::parse($schedule->start_time)->format('g:i A') .
                         ' - ' . Carbon::parse($schedule->end_time)->format('g:i A'),
-                    'is_booked' => (bool) $schedule->is_booked,
                 ];
             })
             ->values();
+    });
 
-        Cache::put($cacheKey, $availableSlots, 300); // 5 minutes
+    // Cache for only 2 minutes instead of 5 for more real-time data
+    Cache::put($cacheKey, $availableSlots, 120);
 
-        return response()->json([
-            'success' => true,
-            'available_slots' => $availableSlots,
-            'date' => $date,
-            'cached' => false
-        ]);
-    }
+    return response()->json([
+        'success' => true,
+        'available_slots' => $availableSlots,
+        'date' => $date,
+        'cached' => false,
+        'cache_key' => $cacheKey
+    ]);
+}
+
+/**
+ * Helper function to get holiday name
+ */
+private function getHolidayName($date)
+{
+    $holidayNames = [
+        // 2025 Regular Holidays
+        "2025-01-01" => "New Year's Day",
+        "2025-04-17" => "Maundy Thursday",
+        "2025-04-18" => "Good Friday",
+        "2025-04-19" => "Black Saturday",
+        "2025-04-20" => "Easter Sunday",
+        "2025-04-09" => "Araw ng Kagitingan",
+        "2025-05-01" => "Labor Day",
+        "2025-06-12" => "Independence Day",
+        "2025-08-21" => "Ninoy Aquino Day",
+        "2025-08-25" => "National Heroes Day",
+        "2025-11-01" => "All Saints' Day",
+        "2025-11-30" => "Bonifacio Day",
+        "2025-12-25" => "Christmas Day",
+        "2025-12-30" => "Rizal Day",
+        "2025-12-31" => "New Year's Eve",
+
+        // 2025 Special Non-Working Holidays
+        "2025-01-29" => "Chinese New Year",
+        "2025-02-25" => "EDSA Revolution Anniversary",
+        "2025-03-01" => "Ramadan Start",
+        "2025-03-31" => "Eid'l Fitr",
+        "2025-11-02" => "All Souls' Day",
+        "2025-12-08" => "Feast of the Immaculate Conception",
+        "2025-12-24" => "Christmas Eve",
+
+        // 2026 Regular Holidays
+        "2026-01-01" => "New Year's Day",
+        "2026-04-02" => "Maundy Thursday",
+        "2026-04-03" => "Good Friday",
+        "2026-04-04" => "Black Saturday",
+        "2026-04-05" => "Easter Sunday",
+        "2026-04-09" => "Araw ng Kagitingan",
+        "2026-05-01" => "Labor Day",
+        "2026-06-12" => "Independence Day",
+        "2026-08-21" => "Ninoy Aquino Day",
+        "2026-08-31" => "National Heroes Day",
+        "2026-11-01" => "All Saints' Day",
+        "2026-11-30" => "Bonifacio Day",
+        "2026-12-25" => "Christmas Day",
+        "2026-12-30" => "Rizal Day",
+        "2026-12-31" => "New Year's Eve",
+
+        // 2026 Special Non-Working Holidays
+        "2026-02-17" => "Chinese New Year",
+        "2026-02-25" => "EDSA Revolution Anniversary",
+        "2026-02-18" => "Ramadan Start",
+        "2026-03-20" => "Eid'l Fitr",
+        "2026-11-02" => "All Souls' Day",
+        "2026-12-08" => "Feast of the Immaculate Conception",
+        "2026-12-24" => "Christmas Eve"
+    ];
+
+    return $holidayNames[$date] ?? null;
+}
 
     /**
-     * Check slot availability
+     * Check slot availability - FIXED
      */
     public function checkAvailability(Request $request)
     {
@@ -442,10 +611,10 @@ public function store(Request $request)
             ], 422);
         }
 
-        // Only check Scheduled appointments (no pending/holding time)
+        // FIXED: Use model constants
         $isAvailable = !Appointment::where('schedule_id', $request->schedule_id)
             ->whereDate('appointment_date', $request->date)
-            ->where('status', 'Scheduled')
+            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_COMPLETED])
             ->exists();
 
         $schedule = Schedule::find($request->schedule_id);
@@ -461,14 +630,13 @@ public function store(Request $request)
     }
 
     /**
-     * Get available dates
+     * Get available dates - FIXED
      */
     public function getAvailableDates(Request $request)
     {
         $startDate = Carbon::tomorrow(); 
         $endDate = Carbon::now()->addMonths(3);
         
-        // CACHE AVAILABLE DATES
         $cacheKey = 'available_dates_range';
         $cachedDates = Cache::get($cacheKey);
         
@@ -487,10 +655,10 @@ public function store(Request $request)
         $availableDates = [];
         $totalSlots = Schedule::count();
 
-        // BATCH QUERY - Get all booked counts in single query (only Scheduled appointments)
+        // FIXED: Use model constants
         $bookedCounts = Appointment::whereDate('appointment_date', '>=', $startDate)
             ->whereDate('appointment_date', '<=', $endDate)
-            ->where('status', 'Scheduled')
+            ->whereNotIn('status', [Appointment::STATUS_CANCELLED, Appointment::STATUS_COMPLETED])
             ->groupBy('appointment_date')
             ->selectRaw('appointment_date, COUNT(*) as booked_count')
             ->pluck('booked_count', 'appointment_date');
@@ -512,7 +680,7 @@ public function store(Request $request)
             }
         }
         
-        Cache::put($cacheKey, $availableDates, 900); // 15 minutes
+        Cache::put($cacheKey, $availableDates, 900);
 
         return response()->json([
             'success' => true,
@@ -525,14 +693,43 @@ public function store(Request $request)
         ]);
     }
 
+/**
+ * Clear availability caches for specific date 
+ */
+private function clearAvailabilityCaches($date)
+{
+    $date = Carbon::parse($date)->format('Y-m-d');
+    
+    // Clear all cache variations for this date
+    $today = Carbon::now()->format('Y-m-d_H');
+    $cacheKeys = [
+        "available_slots:{$date}",
+        "available_slots:{$date}:{$today}",
+    ];
+    
+    // Clear for current hour and previous hour to be safe
+    $previousHour = Carbon::now()->subHour()->format('Y-m-d_H');
+    $cacheKeys[] = "available_slots:{$date}:{$previousHour}";
+    
+    foreach ($cacheKeys as $key) {
+        Cache::forget($key);
+    }
+    
+    Cache::forget('available_dates_range');
+    
+    Log::info('Availability caches cleared aggressively', [
+        'date' => $date, 
+        'cache_keys' => $cacheKeys
+    ]);
+}
+
     /**
      * Send individual appointment reminder email
      */
     private function sendAppointmentReminder($appointment)
     {
         try {
-            // Eager load if not already loaded
-            $user = $appointment->user ?? User::find($appointment->patient_id);
+            $user = $appointment->patient ?? User::find($appointment->patient_id);
             $service = $appointment->service ?? Service::find($appointment->service_id);
             $schedule = $appointment->schedule ?? Schedule::find($appointment->schedule_id);
 
@@ -569,10 +766,9 @@ public function store(Request $request)
     {
         $tomorrow = Carbon::tomorrow()->format('Y-m-d');
         
-        // Get all Scheduled appointments for TOMORROW
-        $appointments = Appointment::with(['user', 'service', 'schedule'])
+        $appointments = Appointment::with(['patient', 'service', 'schedule'])
             ->whereDate('appointment_date', $tomorrow)
-            ->where('status', 'Scheduled')
+            ->where('status', Appointment::STATUS_SCHEDULED)
             ->get();
 
         $sentCount = 0;
@@ -610,21 +806,23 @@ public function store(Request $request)
         return DB::transaction(function () use ($id) {
             $appointment = Appointment::where('appointment_id', $id)
                 ->where('patient_id', Auth::id())
+                ->lockForUpdate()
                 ->first();
 
             if (!$appointment) {
                 return back()->with('error', 'Appointment not found.');
             }
 
-            // Only allow completion of Scheduled or Rescheduled appointments
-            if (!in_array($appointment->status, ['Scheduled', 'Rescheduled'])) {
-                return back()->with('error', 'Only scheduled or rescheduled appointments can be marked as completed.');
+            // FIXED: Use model method
+            if (!$appointment->isScheduled()) {
+                return back()->with('error', 'Only scheduled appointments can be marked as completed.');
             }
             
-            // Update appointment status to Completed
             $appointment->update([
-                'status' => 'Completed',
+                'status' => Appointment::STATUS_COMPLETED,
             ]);
+
+            $this->clearAvailabilityCaches($appointment->appointment_date);
 
             Log::info('Appointment marked as completed', [
                 'appointment_id' => $appointment->appointment_id,
