@@ -21,7 +21,7 @@
 
       <!-- Staff Information -->
       <div class="space-y-2">
-        <p><strong>Staff ID:</strong> {{ staff?.id }}</p>
+        <p><strong>Staff ID:</strong> {{ staff?.user_id }}</p>
         <p><strong>Last Name:</strong> {{ staff?.last_name }}</p>
         <p><strong>First Name:</strong> {{ staff?.first_name }}</p>
         <p><strong>Email:</strong> {{ staff?.email }}</p>

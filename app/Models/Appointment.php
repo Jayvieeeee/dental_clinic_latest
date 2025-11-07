@@ -22,19 +22,19 @@ class Appointment extends Model
         'appointment_date',
         'schedule_datetime',
         'status',
-        'paymongo_session_id', // Added this field for payment tracking
+        'paymongo_session_id',
     ];
 
     protected $casts = [
         'appointment_date' => 'date',
-        'schedule_datetime' => 'datetime', // <-- FIX: Added casting for datetime field
+        'schedule_datetime' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
 
     // Status constants for better code readability
-    const STATUS_PENDING = 'pending';
-    const STATUS_CONFIRMED = 'confirmed';
+    const STATUS_SCHEDULED = 'scheduled';
+    const STATUS_RESCHEDULED = 'rescheduled'; // Fixed: Added missing '='
     const STATUS_CANCELLED = 'cancelled';
     const STATUS_COMPLETED = 'completed';
 
@@ -71,19 +71,19 @@ class Appointment extends Model
     }
 
     /**
-     * Scope for pending appointments
+     * Scope for scheduled appointments
      */
-    public function scopePending($query)
+    public function scopeScheduled($query)
     {
-        return $query->where('status', self::STATUS_PENDING);
+        return $query->where('status', self::STATUS_SCHEDULED);
     }
 
     /**
-     * Scope for confirmed appointments
+     * Scope for rescheduled appointments
      */
-    public function scopeConfirmed($query)
+    public function scopeRescheduled($query)
     {
-        return $query->where('status', self::STATUS_CONFIRMED);
+        return $query->where('status', self::STATUS_RESCHEDULED);
     }
 
     /**
@@ -95,19 +95,27 @@ class Appointment extends Model
     }
 
     /**
-     * Check if appointment is pending
+     * Scope for completed appointments
      */
-    public function isPending(): bool
+    public function scopeCompleted($query)
     {
-        return $this->status === self::STATUS_PENDING;
+        return $query->where('status', self::STATUS_COMPLETED);
     }
 
     /**
-     * Check if appointment is confirmed
+     * Check if appointment is scheduled
      */
-    public function isConfirmed(): bool
+    public function isScheduled(): bool
     {
-        return $this->status === self::STATUS_CONFIRMED;
+        return $this->status === self::STATUS_SCHEDULED;
+    }
+
+    /**
+     * Check if appointment is rescheduled
+     */
+    public function isRescheduled(): bool
+    {
+        return $this->status === self::STATUS_RESCHEDULED;
     }
 
     /**
@@ -116,5 +124,13 @@ class Appointment extends Model
     public function isCancelled(): bool
     {
         return $this->status === self::STATUS_CANCELLED;
+    }
+
+    /**
+     * Check if appointment is completed
+     */
+    public function isCompleted(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED;
     }
 }
