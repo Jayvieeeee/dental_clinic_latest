@@ -16,14 +16,12 @@ class AdminAppointmentController extends Controller
 {
     public function index()
     {
-        // Make sure you're NOT filtering out cancelled appointments
         $appointments = Appointment::with([
                 'patient', 
                 'service.tools',
                 'schedule',
                 'payment'
             ])
-            // REMOVE any whereNotIn or where clauses that filter status
             ->orderBy('appointment_date', 'asc')
             ->get()
             ->map(function ($apt) {
@@ -40,14 +38,13 @@ class AdminAppointmentController extends Controller
                         ? $apt->appointment_date->format('Y-m-d') . ' ' . ($schedule?->time_slot ?? '')
                         : 'N/A',
                     'time'      => $schedule?->time_slot ?? null,
-                    'status'    => ucfirst($apt->status ?? 'Pending'),
+                    'status'    => ucfirst($apt->status ?? 'confirmed'),
                     'payment'   => $payment?->payment_status ?? 'Pending', 
                     'day'       => strtoupper(optional($apt->appointment_date)->format('D')),
                     'date' => optional($apt->appointment_date)->timezone('Asia/Manila')->format('Y-m-d'),
                     'schedule_id' => $apt->schedule_id,
                 ];
             });
-
 
         $timeSlots = Schedule::select('start_time', 'end_time')
             ->get()
@@ -61,10 +58,10 @@ class AdminAppointmentController extends Controller
             ->toArray();
 
         $stats = [
-            'totalPending' => Appointment::where('status', 'pending')->count(),
-            'cancelled'    => Appointment::where('status', 'cancelled')->count(),
-            'rescheduled'  => Appointment::where('status', 'rescheduled')->count(),
-            'completed'    => Appointment::where('status', 'completed')->count(),
+            'totalConfirmed' => Appointment::where('status', 'confirmed')->count(),
+            'rescheduled'    => Appointment::where('status', 'rescheduled')->count(),
+            'cancelled'      => Appointment::where('status', 'cancelled')->count(),
+            'completed'      => Appointment::where('status', 'completed')->count(),
         ];
 
         return Inertia::render('Admin/AppointmentTable', [
@@ -76,17 +73,33 @@ class AdminAppointmentController extends Controller
 
     public function updateStatus($id)
     {
-        $appointment = Appointment::findOrFail($id);
-        
-        $validated = request()->validate([
-            'status' => 'required|in:pending,confirmed,completed,cancelled,rescheduled'
-        ]);
+        try {
+            $appointment = Appointment::findOrFail($id);
+            
+            $validated = request()->validate([
+                'status' => 'required|in:confirmed,rescheduled,cancelled,completed'
+            ]);
 
-        $appointment->update([
-            'status' => $validated['status']
-        ]);
+            Log::info('Updating appointment status:', [
+                'appointment_id' => $id,
+                'old_status' => $appointment->status,
+                'new_status' => $validated['status'],
+                'user' => Auth::id()
+            ]);
 
-        return back()->with('success', 'Appointment status updated.');
+            $appointment->update([
+                'status' => $validated['status']
+            ]);
+
+            return back()->with('success', 'Appointment status updated successfully.');
+
+        } catch (\Exception $e) {
+            Log::error('Failed to update appointment status:', [
+                'appointment_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return back()->with('error', 'Failed to update appointment status.');
+        }
     }
 
     public function reschedule(Request $request, $id)
@@ -94,7 +107,7 @@ class AdminAppointmentController extends Controller
         try {
             DB::beginTransaction();
 
-            $appointment = Appointment::findOrFail($id);
+            $appointment = Appointment::with('schedule')->findOrFail($id);
 
             // Check if appointment is cancelled
             if ($appointment->status === 'cancelled') {
@@ -102,18 +115,17 @@ class AdminAppointmentController extends Controller
             }
 
             $validated = $request->validate([
-                'date' => 'required|date',
+                'date' => 'required|date|after:today',
                 'schedule_id' => 'required|exists:schedules,schedule_id',
             ]);
 
-            // Check if reschedule is at least 12 hours before the original appointment
-            $originalAppointmentDateTime = Carbon::parse($appointment->appointment_date . ' ' . $appointment->schedule->start_time);
-            $currentDateTime = Carbon::now();
-            $hoursDifference = $currentDateTime->diffInHours($originalAppointmentDateTime, false);
-
-            if ($hoursDifference < 12) {
-                return back()->with('error', 'Appointments can only be rescheduled at least 12 hours before the scheduled time.');
-            }
+            Log::info('Admin reschedule attempt:', [
+                'appointment_id' => $id,
+                'current_date' => $appointment->appointment_date,
+                'new_date' => $validated['date'],
+                'new_schedule_id' => $validated['schedule_id'],
+                'current_status' => $appointment->status
+            ]);
 
             // Check if the selected schedule is available
             $isScheduleTaken = Appointment::where('appointment_date', $validated['date'])
@@ -126,121 +138,83 @@ class AdminAppointmentController extends Controller
                 return back()->with('error', 'The selected time slot is already taken.');
             }
 
-     
+            // Update the appointment - set to rescheduled status
             $appointment->update([
                 'appointment_date' => $validated['date'],
                 'schedule_id' => $validated['schedule_id'],
-                'status' => 'rescheduled',
+                'status' => 'rescheduled', // Use rescheduled status
             ]);
 
             DB::commit();
+
+            Log::info('Appointment rescheduled successfully:', [
+                'appointment_id' => $id,
+                'new_date' => $validated['date'],
+                'new_schedule_id' => $validated['schedule_id']
+            ]);
 
             return redirect()->route('admin.appointments.index')
                 ->with('success', 'Appointment rescheduled successfully.');
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();
+            Log::error('Reschedule validation failed:', $e->errors());
             return back()->withErrors($e->errors())->withInput();
             
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Reschedule failed: ' . $e->getMessage());
-            return back()->with('error', 'Failed to reschedule appointment.');
+            return back()->with('error', 'Failed to reschedule appointment: ' . $e->getMessage());
         }
     }
 
-    public function cancel($id)
-    {
-        try {
-            return DB::transaction(function () use ($id) {
-                $appointment = Appointment::with('schedule')
-                    ->where('appointment_id', $id)
-                    ->first();
-
-                if (!$appointment) {
-                    return redirect()->back()->with('error', 'Appointment not found.');
-                }
-
-                if ($appointment->status === 'cancelled') {
-                    return redirect()->back()->with('error', 'Appointment is already cancelled.');
-                }
-
-                Log::info("Admin cancelling appointment:", [
-                    'appointment_id' => $appointment->appointment_id,
-                    'current_status' => $appointment->status,
-                    'appointment_date' => $appointment->appointment_date,
-                ]);
-
-                // 12-hour rule using the formatted time slot
-                $appointmentDate = Carbon::parse($appointment->appointment_date);
-                
-                // Use the time slot from the schedule (e.g., "10:00 AM - 12:00 PM")
-                $timeSlot = $appointment->schedule->time_slot ?? '10:00 AM - 12:00 PM';
-                
-                // Extract start time from time slot (first part before " - ")
-                $startTimeString = explode(' - ', $timeSlot)[0];
-                
-                // Convert "10:00 AM" to Carbon time
-                $startTime = Carbon::parse($startTimeString);
-                
-                // Combine date and time
-                $appointmentDateTime = $appointmentDate->copy()
-                    ->setTime($startTime->hour, $startTime->minute, $startTime->second);
-
-                $currentDateTime = Carbon::now();
-                $hoursDifference = $currentDateTime->diffInHours($appointmentDateTime, false);
-
-                Log::info("Time validation using time_slot:", [
-                    'time_slot' => $timeSlot,
-                    'start_time_extracted' => $startTimeString,
-                    'appointment_datetime' => $appointmentDateTime,
-                    'hours_difference' => $hoursDifference
-                ]);
-
-                if ($hoursDifference < 12) {
-                    return redirect()->back()->with('error', 
-                        'Appointments can only be cancelled at least 12 hours before the scheduled time. ' .
-                        'This appointment is in ' . round($hoursDifference, 1) . ' hours.'
-                    );
-                }
-
-                // Release the schedule slot
-                if ($appointment->schedule) {
-                    $appointment->schedule->update(['is_available' => true]);
-                }
-
-                // Update appointment status
-                $appointment->update([
-                    'status' => 'cancelled',
-                    'cancelled_at' => now(),
-                    'cancelled_by' => Auth::id(),
-                ]);
-
-                Log::info('Appointment successfully cancelled by admin');
-
-                return redirect()
-                    ->route('admin.appointments.index')
-                    ->with('success', 'Appointment cancelled successfully and time slot released.');
-            });
-
-        } catch (\Exception $e) {
-            Log::error('Admin cancel failed: ' . $e->getMessage());
-            return redirect()->back()->with('error', 'Failed to cancel appointment.');
-        }
-    }
-    public function getBookedSlots(Request $request)
+public function cancel($id)
 {
-    $validated = $request->validate([
-        'date' => 'required|date'
-    ]);
+    try {
+        DB::beginTransaction();
 
-    $bookedSlots = Appointment::where('appointment_date', $validated['date'])
-        ->whereNotIn('status', ['cancelled'])
-        ->pluck('schedule_id')
-        ->toArray();
+        $appointment = Appointment::with('schedule')->findOrFail($id);
 
-    return response()->json([
-        'booked_slots' => $bookedSlots
-    ]);
+        if ($appointment->status === 'cancelled') {
+            return redirect()->back()->with('error', 'Appointment is already cancelled.');
+        }
+
+        // Update appointment status to cancelled
+        $appointment->update([
+            'status' => 'cancelled',
+        ]);
+
+        // Release the schedule slot
+        if ($appointment->schedule) {
+            $appointment->schedule->update(['is_available' => true]);
+        }
+
+        DB::commit();
+
+        return redirect()
+            ->route('admin.appointments.index')
+            ->with('success', 'Appointment cancelled successfully.');
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Cancel failed: ' . $e->getMessage());
+        return redirect()->back()->with('error', 'Failed to cancel appointment.');
+    }
 }
+
+    public function getBookedSlots(Request $request)
+    {
+        $validated = $request->validate([
+            'date' => 'required|date'
+        ]);
+
+        $bookedSlots = Appointment::where('appointment_date', $validated['date'])
+            ->whereNotIn('status', ['cancelled'])
+            ->pluck('schedule_id')
+            ->toArray();
+
+        return response()->json([
+            'booked_slots' => $bookedSlots
+        ]);
+    }
 }
