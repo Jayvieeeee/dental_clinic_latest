@@ -39,6 +39,23 @@ const getStatusColor = (status) => {
   }
 }
 
+// 🗓️ NEW: Date Formatting Function for full month name
+const formatAppointmentDate = (dateString) => {
+  if (!dateString) return ''
+  try {
+    // Note: The date string from the backend must be in a format that new Date() can parse.
+    const date = new Date(dateString)
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long', // This option formats the month as a full name (e.g., January)
+      day: 'numeric',
+    })
+  } catch (e) {
+    console.error("Date formatting failed:", e)
+    return dateString // Return original in case of error
+  }
+}
+
 // 🔍 View details
 const openDetails = (appointment) => {
   selected.value = appointment
@@ -142,7 +159,6 @@ const cancelAppointment = () => {
           Appointments
         </h1>
 
-        <!-- Filters -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
           <div class="w-full md:w-64">
             <select 
@@ -163,7 +179,6 @@ const cancelAppointment = () => {
           </p>
         </div>
 
-        <!-- Appointments Table -->
         <div class="overflow-x-auto rounded-2xl shadow-lg">
           <table class="w-full border-collapse text-center">
             <thead>
@@ -182,7 +197,7 @@ const cancelAppointment = () => {
                 class="border-b hover:bg-gray-50 transition-colors font-medium">
                 
                 <td class="py-5 px-6 text-gray-800 border-r-2 border-dark">{{ appointment.procedure }}</td>
-                <td class="py-5 px-6 text-gray-800 border-r-2 border-dark">{{ appointment.date }} | {{ appointment.time }}</td>
+                <td class="py-5 px-6 text-gray-800 border-r-2 border-dark">{{ formatAppointmentDate(appointment.date) }} | {{ appointment.time }}</td>
 
                 <td class="py-5 px-6 border-r-2 border-dark font-semibold"
                     :class="{
@@ -216,11 +231,10 @@ const cancelAppointment = () => {
     </div>
   </CustomerLayout>
 
-  <!-- Appointment Details Modal -->
   <AppModal :show="showModal" @close="showModal = false">
     <template #default>
       <p><strong>Procedure:</strong> {{ selected?.procedure }}</p>
-      <p><strong>Date & Time:</strong> {{ selected?.date }} | {{ selected?.time }}</p>
+      <p><strong>Date & Time:</strong> {{ formatAppointmentDate(selected?.date) }} | {{ selected?.time }}</p>
       <p><strong>Payment Status:</strong> {{ selected?.payment_status }}</p>
       <p><strong>Status:</strong> {{ selected?.status }}</p>
     </template>
@@ -243,7 +257,6 @@ const cancelAppointment = () => {
     </template>
   </AppModal>
 
-  <!-- DateTime Modal -->
   <DateTimeModal
     v-model="showReschedule"
     :selectedDate="selectedDate"
@@ -252,7 +265,6 @@ const cancelAppointment = () => {
     @datetime-selected="handleDateTimeSelected"
   />
 
-  <!-- Cancel Confirmation Modal -->
   <AppModal :show="showCancelConfirm" @close="showCancelConfirm = false">
     <template #default>
       <div class="flex flex-col justify-center items-center text-center p-4 min-h-[130px]">
@@ -264,7 +276,7 @@ const cancelAppointment = () => {
     </template>
 
     <template #actions>
-      <div class="flex justify-center items-center gap-8 pb-8">
+      <div class="flex justify-center items-center gap-8 pb-12">
         <button
           @click="showCancelConfirm = false"
           class="px-5 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium transition">
@@ -278,4 +290,4 @@ const cancelAppointment = () => {
       </div>
     </template>
   </AppModal>
-</template>
+</template> 

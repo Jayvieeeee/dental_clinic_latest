@@ -1,39 +1,41 @@
 <script setup>
 import { Link, usePage, router } from '@inertiajs/vue3'
 import { ref, onMounted, onUnmounted } from 'vue'
+import Modal from '@/Components/Modal.vue'
 
 const page = usePage()
 const isSidebarOpen = ref(false)
 const isMobile = ref(false)
+const showLogoutConfirm = ref(false)
 
 const menuItems = [
   {
     id: 'home',
-    label: 'HOME',
+    label: 'Home',
     href: '/home',
     icon: '/icons/home.png'
   },
   {
     id: 'schedule',
-    label: 'SCHEDULE APPOINTMENT',
+    label: 'Schedule Appointment',
     href: '/schedule-appointment',
     icon: '/icons/sched.png'
   },
   {
     id: 'appointments',
-    label: 'VIEW APPOINTMENTS',
+    label: 'View Appointment',
     href: '/customer/appointments',
     icon: '/icons/view_appointment.png'
   },
   {
     id: 'feedback',
-    label: 'FEEDBACK',
+    label: 'Feedback',
     href: '/feedback',
     icon: '/icons/feedback.png'
   },
   {
     id: 'profile',
-    label: 'PROFILE',
+    label: 'Profile',
     href: '/profile',
     icon: '/icons/profile.png'
   }
@@ -56,7 +58,6 @@ onUnmounted(() => {
 })
 
 const isActive = (href) => {
-  // Special handling for home/dashboard route
   if (href === '/dashboard') {
     return page.url === href || page.url === '/' || page.url === '/home'
   }
@@ -72,12 +73,22 @@ const closeSidebar = () => {
 }
 
 const handleLogout = () => {
-  router.post('/logout')
+  showLogoutConfirm.value = true
+}
+
+const confirmLogout = () => {
+  router.post('/logout', {
+    onSuccess: () => {
+      showLogoutConfirm.value = false
+    },
+    onError: () => {
+      showLogoutConfirm.value = false
+    }
+  })
 }
 </script>
 
 <template>
-  <!-- Mobile Menu Button - Only show on mobile -->
   <div v-if="isMobile" class="fixed top-4 left-4 z-50">
     <button 
       @click="toggleSidebar"
@@ -99,7 +110,6 @@ const handleLogout = () => {
     </button>
   </div>
 
-  <!-- Overlay for mobile - Only show when sidebar is open on mobile -->
   <Transition
     enter-active-class="transition-opacity duration-300"
     enter-from-class="opacity-0"
@@ -115,7 +125,6 @@ const handleLogout = () => {
     ></div>
   </Transition>
 
-  <!-- Sidebar -->
   <aside 
     :class="[
       'h-screen w-80 font-rem bg-gradient-to-b from-white to-neutral flex flex-col shadow-2xl border rounded-r-lg',
@@ -124,11 +133,9 @@ const handleLogout = () => {
         : 'sticky top-0 left-0'
     ]"
   >
-    <!-- Logo Section -->
     <div class="p-6">
       <div class="flex items-center justify-between lg:justify-center">
-        <img src="/icons/logo.png" alt="District Smiles Dental Center" class="h-16 lg:h-20 my-4">
-        <!-- Close button for mobile only -->
+        <img src="/icons/logo.png" alt="District Smiles Dental Center" class="h-14 lg:h-20 my-4">
         <button 
           v-if="isMobile"
           @click="closeSidebar"
@@ -142,7 +149,6 @@ const handleLogout = () => {
       </div>
     </div>
 
-    <!-- Menu Items -->
     <nav class="flex-1 py-3 px-2 overflow-y-auto">
       <Link
         v-for="item in menuItems"
@@ -175,7 +181,6 @@ const handleLogout = () => {
       </Link>
     </nav>
 
-    <!-- Logout Button -->
     <div class="p-2 pb-6">
       <button
         @click="handleLogout"
@@ -187,9 +192,38 @@ const handleLogout = () => {
           class="w-5 h-5 lg:w-6 lg:h-6 object-contain flex-shrink-0"
         >
         <span class="font-medium text-xs lg:text-sm">
-          LOGOUT
+          Logout
         </span>
       </button>
     </div>
   </aside>
+  
+  <Modal :show="showLogoutConfirm" @close="showLogoutConfirm = false" max-width="md">
+    <div class="p-6">
+      <div class="flex flex-col justify-center items-center text-center mb-6">
+        <h3 class="text-xl font-bold text-dark mb-2">
+          Confirm Logout
+        </h3>
+        
+        <p class="text-gray-600">
+          Are you sure you want to log out? You will need to sign in again to access your account.
+        </p>
+      </div>
+
+      <div class="flex justify-center items-center gap-3">
+        <button
+          @click="showLogoutConfirm = false"
+          class="px-6 py-1.5 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium transition-colors duration-200"
+        >
+          Cancel
+        </button>
+        <button
+          @click="confirmLogout"
+          class="px-6 py-1.5 rounded-lg bg-neutral hover:bg-dark text-white font-medium transition-colors duration-200"
+        >
+          Log Out
+        </button>
+      </div>
+    </div>
+  </Modal>
 </template>

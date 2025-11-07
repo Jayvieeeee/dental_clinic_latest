@@ -3,22 +3,19 @@ import { ref, computed } from 'vue';
 import { Head, usePage, router } from "@inertiajs/vue3";
 import CustomerLayout from '@/Layouts/CustomerLayout.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
-// Assuming these are your existing modals/components
 import DateTimeModal from '@/Components/DateTimeModal.vue';
 import PaymentModal from '@/Pages/Payment/PaymentModal.vue';
 import Modal from '@/Components/Modal.vue';
+import SuccessAppointmentModal from '@/Components/SuccessAppointmentModal.vue';
 
 const page = usePage();
 
 const user = computed(() => page.props.user ?? {});
 const services = computed(() => page.props.services ?? []);
 
-// --- NEW STATE FOR SUCCESS MODAL ---
 const showSuccessModal = ref(false);
-const successAppointmentData = ref(null); // To store details for the success view
-// ------------------------------------
+const successAppointmentData = ref(null);
 
-// form data 
 const form = ref({
     firstName: user.value.first_name || '',
     lastName: user.value.last_name || '',
@@ -37,7 +34,6 @@ const showModal = ref(false);
 const modalMessage = ref('');
 const showPaymentModal = ref(false);
 
-// update service selection to include serviceId
 const updateServiceSelection = (serviceName) => {
     form.value.service = serviceName;
     const selectedService = services.value.find(
@@ -46,13 +42,11 @@ const updateServiceSelection = (serviceName) => {
     form.value.serviceId = selectedService ? selectedService.service_id : '';
 };
 
-// message modal
 const openModal = (message) => {
     modalMessage.value = message;
     showModal.value = true;
 };
 
-// slot picker 
 const chooseSlots = () => {
     if (!form.value.service) {
         openModal('Please select a dental service first.');
@@ -62,17 +56,13 @@ const chooseSlots = () => {
 };
 
 const handleDateTimeSelected = (data) => {
-    // console.log('DateTime Selected Data:', data);
-
     form.value.date = data.date || '';
-    form.value.dateTime = data.time || ''; 	
+    form.value.dateTime = data.time || '';  
     form.value.timeLabel = data.timeLabel || ''; 
     form.value.scheduleId = data.scheduleId || '';
-
-    showSlotPicker.value = false; // Close the slot picker once selected
+    showSlotPicker.value = false;
 };
 
-// update handlers for v-model 
 const updateSelectedDate = (date) => {
     form.value.date = date;
 };
@@ -81,16 +71,12 @@ const updateSelectedScheduleId = (scheduleId) => {
     form.value.scheduleId = scheduleId;
 };
 
-// payment modal
 const openPaymentModal = () => {
     if (!validateForm()) return;
     showPaymentModal.value = true;
 };
 
-// form validation
 const validateForm = () => {
-    // console.log('Validating form:', form.value);
-    
     if (!form.value.service) {
         openModal('Please select a dental service.');
         return false;
@@ -103,11 +89,9 @@ const validateForm = () => {
         openModal('Please select a valid time slot.');
         return false;
     }
-    
     return true;
 };
 
-// Date/Time formatting helper for the modal
 const formatDate = (dateString) => {
     if (!dateString) return '';
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -128,31 +112,23 @@ const formatDateTime = (dateTimeString) => {
     })
 }
 
-// --- UPDATED HANDLER ---
 const handlePaymentSuccess = (paymentData) => {
     showPaymentModal.value = false;
 
-    // 1. Prepare data for the success modal
     const selectedService = services.value.find(s => s.service_id === form.value.serviceId);
 
     successAppointmentData.value = {
-        // You should pass the actual amount paid from the paymentData, 
-        // but using a hardcoded placeholder for now based on your previous code.
         amount_paid: '₱300.00', 
         payment_method: paymentData.method || 'Online Payment', 
         transaction_reference: paymentData.reference || 'N/A',
-        paid_at: new Date().toISOString(), // Use current time or paymentData.paid_at
-        
-        // Appointment details
+        paid_at: new Date().toISOString(),
         service_name: selectedService?.service_name || form.value.service,
         appointment_date: form.value.date,
         time_slot: form.value.timeLabel
     };
 
-    // 2. Show the success modal
     showSuccessModal.value = true;
     
-    // 3. Clear the form after a successful booking (optional, but good practice)
     form.value.service = '';
     form.value.serviceId = '';
     form.value.date = '';
@@ -160,7 +136,6 @@ const handlePaymentSuccess = (paymentData) => {
     form.value.timeLabel = '';
     form.value.scheduleId = '';
 };
-// -----------------------
 
 const handlePaymentCancelled = () => {
     showPaymentModal.value = false;
@@ -169,12 +144,12 @@ const handlePaymentCancelled = () => {
 
 const goToAppointments = () => {
     showSuccessModal.value = false;
-    router.visit(route('customer.view')); // Assuming 'customer.view' is your appointments list
+    router.visit(route('customer.view'));
 }
 
 const goHome = () => {
     showSuccessModal.value = false;
-    router.visit(route('customer.home')); // Assuming 'customer.home' is your homepage
+    router.visit(route('customer.home'));
 }
 </script>
 
@@ -251,6 +226,10 @@ const goHome = () => {
                         </div>
                     </section>
 
+                    <div class="mt-20 italic text-sm text-gray-400 text-center sm:text-left px-2 sm:px-4 md:px-8">
+                        Payment required: Please complete the ₱300 downpayment to confirm your reservation.
+                    </div>
+
                     <div class="flex justify-center sm:justify-end pt-4 sm:pt-6">
                         <PrimaryButton
                             @click="openPaymentModal"
@@ -279,7 +258,7 @@ const goHome = () => {
             @update:selectedDate="updateSelectedDate"
             @update:selectedScheduleId="updateSelectedScheduleId"
             @datetime-selected="handleDateTimeSelected"
-        /> 	
+        />
 
         <PaymentModal
             v-model="showPaymentModal"
@@ -299,84 +278,14 @@ const goHome = () => {
             @payment-cancelled="handlePaymentCancelled"
         />
 
-        <Modal :show="showSuccessModal" @close="showSuccessModal = false" max-width="sm">
-            <div class="p-6">
-                <button
-                    @click="showSuccessModal = false"
-                    class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition"
-                >
-                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-                
-                <div class="text-center pt-4">
-                    <div class="mx-auto flex items-center justify-center h-20 w-20 rounded-full bg-green-100">
-                        <svg class="h-10 w-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                        </svg>
-                    </div>
-                    
-                    <h2 class="mt-4 text-2xl font-extrabold text-gray-900">
-                        Payment Successful!
-                    </h2>
-                    
-                    <p class="mt-1 text-sm text-gray-600">
-                        Thank you for your payment. Your appointment has been confirmed.
-                    </p>
-                </div>
+    <SuccessAppointmentModal
+    :show="showSuccessModal"
+    :data="successAppointmentData"
+    @close="showSuccessModal = false"
+    @go-appointments="goToAppointments"
+    @go-home="goHome"
+    />
 
-                <div class="bg-white rounded-lg p-5 mt-6 border border-gray-100">
-                    <h3 class="text-md font-medium text-gray-900 mb-3">Appointment Details</h3>
-                    
-                    <div class="space-y-2 text-sm">
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Service:</span>
-                            <span class="font-medium">{{ successAppointmentData?.service_name || 'N/A' }}</span>
-                        </div>
-                        
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Date:</span>
-                            <span class="font-medium">{{ formatDate(successAppointmentData?.appointment_date) }}</span>
-                        </div>
-                        
-                        <div class="flex justify-between">
-                            <span class="text-gray-600">Time:</span>
-                            <span class="font-medium">{{ successAppointmentData?.time_slot || 'N/A' }}</span>
-                        </div>
-                        
-                        <div class="flex justify-between border-t pt-3 mt-3">
-                            <span class="text-gray-600 font-semibold">Amount Paid:</span>
-                            <span class="font-bold text-lg text-green-600">{{ successAppointmentData?.amount_paid || 'N/A' }}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-if="successAppointmentData" class="bg-gray-50 rounded-lg p-4 mt-4">
-                    <h4 class="text-xs font-medium text-gray-700 mb-2">Payment Information</h4>
-                    <div class="text-xs text-gray-600 space-y-1">
-                        <div>Method: {{ successAppointmentData.payment_method }}</div>
-                        <div>Reference: {{ successAppointmentData.transaction_reference }}</div>
-                        <div>Paid at: {{ formatDateTime(successAppointmentData.paid_at) }}</div>
-                    </div>
-                </div>
-                
-                <div class="mt-6 flex flex-col space-y-2">
-                    <PrimaryButton 
-                        @click="goToAppointments" 
-                        class="w-full bg-green-600 hover:bg-green-700"
-                    >
-                        View My Appointments
-                    </PrimaryButton>
-                    <button 
-                        @click="goHome" 
-                        class="w-full text-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                    >
-                        Back to Home
-                    </button>
-                </div>
-
-            </div>
-        </Modal>
+        
     </CustomerLayout>
 </template>

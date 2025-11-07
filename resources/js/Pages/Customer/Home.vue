@@ -40,12 +40,14 @@ import { Head } from "@inertiajs/vue3"
             </Link>
           </div>
         </div>
-        <div class="mt-20 items-center text-center justify-center">  
+        <div class="my-20 items-center text-center justify-center">  
           <h2 class="font-bold text-2xl text-dark">See your past visit here</h2>
-          <PrimaryButton class=" bg-dark hover:bg-light text-white text-lg font-semibold w-54 py-4 rounded-full transition-all duration-300 shadow-md mt-4">
-            Appointment History
-          </PrimaryButton>
         </div>
+            <Link
+            href="/customer/appointments"
+            class=" bg-dark hover:bg-light block mx-auto text-white text-center text-lg font-semibold w-64 py-3.5 rounded-full transition-all duration-300 shadow-md">
+            Appointment History
+          </Link>
       </div>
     </div>
   </CustomerLayout>

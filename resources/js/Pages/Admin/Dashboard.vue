@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed } from 'vue'
-import AdminLayout from '@/Layouts/AdminLayout.vue'
-import { CalendarIcon, UserPlusIcon, ClockIcon } from '@heroicons/vue/24/outline'
+import { ref, computed, onMounted } from 'vue'
+import { Chart, registerables } from 'chart.js'
+
+Chart.register(...registerables)
 
 // Stats data
 const totalAppointments = ref(10)
@@ -11,6 +12,12 @@ const pendingAppointments = ref(25)
 // Weekly dropdown
 const selectedPeriod = ref('Weekly')
 const periods = ['Daily', 'Weekly', 'Monthly', 'Yearly']
+
+// Chart refs
+const barChartRef = ref(null)
+const donutChartRef = ref(null)
+let barChartInstance = null
+let donutChartInstance = null
 
 // Appointments chart data
 const appointmentsData = ref([
@@ -27,265 +34,309 @@ const totalValue = computed(() => {
   return appointmentsData.value.reduce((sum, item) => sum + item.value, 0)
 })
 
-const maxValue = computed(() => {
-  return Math.max(...appointmentsData.value.map(item => item.value))
-})
-
 // Appointment Status data
 const appointmentStatus = ref([
-  { label: 'Completed', percentage: 37, color: 'bg-green-500' },
-  { label: 'Scheduled', percentage: 35, color: 'bg-teal-500' },
-  { label: 'Rescheduled', percentage: 18, color: 'bg-blue-500' },
-  { label: 'Cancelled', percentage: 6, color: 'bg-red-500' },
-  { label: 'No show', percentage: 4, color: 'bg-gray-300' }
+  { label: 'Completed', percentage: 37, color: '#22c55e' },
+  { label: 'Scheduled', percentage: 35, color: '#14b8a6' },
+  { label: 'Rescheduled', percentage: 18, color: '#3b82f6' },
+  { label: 'Cancelled', percentage: 6, color: '#ef4444' },
+  { label: 'No show', percentage: 4, color: '#d1d5db' }
 ])
-
-// Calculate donut chart segments
-const calculateDonutSegments = () => {
-  let currentAngle = -90 // Start from top
-  return appointmentStatus.value.map(status => {
-    const angle = (status.percentage / 100) * 360
-    const segment = {
-      ...status,
-      startAngle: currentAngle,
-      endAngle: currentAngle + angle
-    }
-    currentAngle += angle
-    return segment
-  })
-}
-
-const donutSegments = computed(() => calculateDonutSegments())
 
 // Upcoming appointments
 const upcomingAppointments = ref([
   {
     id: 1,
     name: 'Alex Ramos',
-    procedure: 'Tooth Extraction / Root Canal Treatment / (Wisdom Tooth)',
-    dateTime: '10-15-2025\n1:00 p.m - 3:00 p.m'
+    procedure: 'Tooth Extraction / Root Canal Treatment/ Wisdom Tooth Removal',
+    date: '10-15-2025',
+    time: '1:00 p.m - 3:00 p.m'
   },
   {
     id: 2,
     name: 'Gregorio Garcia',
     procedure: 'Mouth Examination / Oral Prophylaxis (Cleaning)',
-    dateTime: '10-16-2025\n10:00 a.m - 1:00 p.m'
+    date: '10-16-2025',
+    time: '10:00 a.m - 1:00 p.m'
   },
   {
     id: 3,
     name: 'Chloe Rivera',
     procedure: 'Tooth Restoration (Pasta)',
-    dateTime: '10-16-2025\n1:00 p.m - 3:00 p.m'
+    date: '10-16-2025',
+    time: '1:00 p.m - 3:00 p.m'
   }
 ])
 
-// Helper function to calculate bar height percentage
-const getBarHeight = (value) => {
-  if (maxValue.value === 0) return 0
-  return (value / maxValue.value) * 100
+// Initialize Bar Chart
+const initBarChart = () => {
+  if (!barChartRef.value) return
+  
+  if (barChartInstance) {
+    barChartInstance.destroy()
+  }
+
+  const ctx = barChartRef.value.getContext('2d')
+  barChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: appointmentsData.value.map(d => d.day),
+      datasets: [{
+        label: 'Appointments',
+        data: appointmentsData.value.map(d => d.value),
+        backgroundColor: '#14b8a6',
+        borderRadius: 8,
+        barThickness: 40
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          backgroundColor: '#1f2937',
+          padding: 12,
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          cornerRadius: 8
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 60,
+          ticks: {
+            stepSize: 10,
+            color: '#6b7280',
+            font: {
+              size: 12
+            }
+          },
+          grid: {
+            color: '#e5e7eb',
+            drawBorder: false
+          }
+        },
+        x: {
+          ticks: {
+            color: '#6b7280',
+            font: {
+              size: 12
+            }
+          },
+          grid: {
+            display: false
+          }
+        }
+      }
+    }
+  })
 }
+
+// Initialize Donut Chart
+const initDonutChart = () => {
+  if (!donutChartRef.value) return
+  
+  if (donutChartInstance) {
+    donutChartInstance.destroy()
+  }
+
+  const ctx = donutChartRef.value.getContext('2d')
+  donutChartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: appointmentStatus.value.map(s => s.label),
+      datasets: [{
+        data: appointmentStatus.value.map(s => s.percentage),
+        backgroundColor: appointmentStatus.value.map(s => s.color),
+        borderWidth: 0,
+        cutout: '70%'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          backgroundColor: '#1f2937',
+          padding: 12,
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          cornerRadius: 8,
+          callbacks: {
+            label: function(context) {
+              return context.label + ': ' + context.parsed + '%'
+            }
+          }
+        }
+      }
+    }
+  })
+}
+
+onMounted(() => {
+  initBarChart()
+  initDonutChart()
+})
 </script>
 
 <template>
-  <AdminLayout>
-    <div class="min-h-screen bg-gray-100 p-8">
-      <div class="max-w-7xl mx-auto">
-        <!-- Header -->
-        <div class="mb-8 flex justify-between items-center">
-          <h1 class="text-4xl font-bold text-teal-700">HOME</h1>
-          <div class="text-right">
-            <p class="text-sm text-gray-600">Sunday</p>
-            <p class="text-lg font-semibold text-gray-800">October 12, 2025</p>
-          </div>
+  <div class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4">
+    <div class="max-w-7xl mx-auto">
+      <!-- Header -->
+      <div class="mb-4 flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-teal-700">HOME</h1>
+        <div class="text-right">
+          <p class="text-xs text-teal-600 font-medium">Sunday</p>
+          <p class="text-sm font-semibold text-gray-800">October 12, 2025</p>
         </div>
+      </div>
 
-        <!-- Top Section -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <!-- Left Stats Cards -->
-          <div class="space-y-4">
-            <!-- Total Appointments Card -->
-            <div class="bg-white rounded-2xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-16 h-16 bg-teal-100 rounded-xl flex items-center justify-center">
-                  <CalendarIcon class="w-8 h-8 text-teal-700" />
-                </div>
-                <div>
-                  <p class="text-4xl font-bold text-gray-900">{{ totalAppointments }}</p>
-                  <p class="text-sm text-gray-600 mt-1">Total Appointments (Today)</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- Patients Registered Card -->
-            <div class="bg-white rounded-2xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-16 h-16 bg-teal-100 rounded-xl flex items-center justify-center">
-                  <UserPlusIcon class="w-8 h-8 text-teal-700" />
-                </div>
-                <div>
-                  <p class="text-4xl font-bold text-gray-900">{{ patientsRegistered }}</p>
-                  <p class="text-sm text-gray-600 mt-1">Patients Registered</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- Pending Appointments Card -->
-            <div class="bg-white rounded-2xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-16 h-16 bg-teal-100 rounded-xl flex items-center justify-center">
-                  <ClockIcon class="w-8 h-8 text-teal-700" />
-                </div>
-                <div>
-                  <p class="text-4xl font-bold text-gray-900">{{ pendingAppointments }}</p>
-                  <p class="text-sm text-gray-600 mt-1">Pending Appointments</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Appointments Chart -->
-          <div class="lg:col-span-2 bg-white rounded-2xl shadow-md p-6">
-            <div class="flex justify-between items-center mb-6">
-              <h2 class="text-xl font-bold text-gray-900">Appointments</h2>
-              <select
-                v-model="selectedPeriod"
-                class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-              >
-                <option v-for="period in periods" :key="period" :value="period">
-                  {{ period }}
-                </option>
-              </select>
-            </div>
-
-            <!-- Chart -->
-            <div class="relative h-80">
-              <!-- Y-axis labels -->
-              <div class="absolute left-0 top-0 bottom-8 flex flex-col justify-between text-xs text-gray-600 w-8">
-                <span>60</span>
-                <span>50</span>
-                <span>40</span>
-                <span>30</span>
-                <span>20</span>
-                <span>10</span>
-                <span>0</span>
-              </div>
-
-              <!-- Chart area -->
-              <div class="ml-12 h-full flex items-end justify-around gap-2 border-b border-l border-gray-300 pb-8">
-                <div
-                  v-for="item in appointmentsData"
-                  :key="item.day"
-                  class="flex-1 flex flex-col items-center"
-                >
-                  <!-- Bar -->
-                  <div class="relative w-full flex items-end justify-center" style="height: 280px;">
-                    <div
-                      v-if="item.value > 0"
-                      class="w-full bg-teal-600 rounded-t-lg relative flex items-start justify-center pt-2"
-                      :style="{ height: `${getBarHeight(item.value)}%` }"
-                    >
-                      <span class="text-xs font-semibold text-white">{{ item.value }}</span>
-                    </div>
-                  </div>
-                  <!-- Day label -->
-                  <span class="text-xs text-gray-600 mt-2">{{ item.day }}</span>
-                </div>
-              </div>
-
-              <!-- Total Value -->
-              <div class="absolute left-32 top-1/2 -translate-y-1/2 text-center">
-                <p class="text-sm text-gray-600">Total Value</p>
-                <p class="text-3xl font-bold text-gray-900">{{ totalValue }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Bottom Section -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <!-- Appointment Status -->
-          <div class="bg-white rounded-2xl shadow-md p-6">
-            <h2 class="text-xl font-bold text-gray-900 mb-6">Appointment Status</h2>
-            
-            <div class="flex items-center gap-8">
-              <!-- Legend -->
-              <div class="flex-1 space-y-3">
-                <div
-                  v-for="status in appointmentStatus"
-                  :key="status.label"
-                  class="flex items-center justify-between"
-                >
-                  <div class="flex items-center gap-2">
-                    <div :class="['w-3 h-3 rounded-full', status.color]"></div>
-                    <span class="text-sm text-gray-700">{{ status.label }}</span>
-                  </div>
-                  <span class="text-sm font-semibold text-gray-900">{{ status.percentage }}%</span>
-                </div>
-              </div>
-
-              <!-- Donut Chart -->
-              <div class="relative w-48 h-48">
-                <svg viewBox="0 0 100 100" class="transform -rotate-90">
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="35"
-                    fill="none"
-                    stroke="#e5e7eb"
-                    stroke-width="15"
-                  />
-                  <circle
-                    v-for="(segment, index) in donutSegments"
-                    :key="index"
-                    cx="50"
-                    cy="50"
-                    r="35"
-                    fill="none"
-                    :stroke="segment.label === 'Completed' ? '#22c55e' : 
-                             segment.label === 'Scheduled' ? '#14b8a6' :
-                             segment.label === 'Rescheduled' ? '#3b82f6' :
-                             segment.label === 'Cancelled' ? '#ef4444' : '#d1d5db'"
-                    stroke-width="15"
-                    :stroke-dasharray="`${segment.percentage * 2.2} ${220 - segment.percentage * 2.2}`"
-                    :stroke-dashoffset="220 - (segment.startAngle + 90) * 2.2 / 360"
-                    class="transition-all duration-300"
-                  />
+      <!-- Top Section -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <!-- Left Stats Cards -->
+        <div class="space-y-3">
+          <!-- Total Appointments Card -->
+          <div class="bg-white rounded-xl shadow-lg p-4 hover:shadow-xl transition-shadow">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 bg-gradient-to-br from-teal-100 to-teal-200 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
               </div>
+              <div>
+                <p class="text-3xl font-bold text-gray-900">{{ totalAppointments }}</p>
+                <p class="text-xs text-gray-600 mt-1">Total Appointments (Today)</p>
+              </div>
             </div>
           </div>
 
-          <!-- Upcoming Scheduled Appointments -->
-          <div class="bg-white rounded-2xl shadow-md p-6">
-            <h2 class="text-xl font-bold text-gray-900 mb-6">Upcoming Scheduled Appointments</h2>
-            
-            <div class="overflow-x-auto">
-              <table class="w-full">
-                <thead>
-                  <tr class="bg-teal-600 text-white">
-                    <th class="px-4 py-3 text-left text-sm font-semibold">Name</th>
-                    <th class="px-4 py-3 text-left text-sm font-semibold">Procedure Type</th>
-                    <th class="px-4 py-3 text-left text-sm font-semibold">Date and Time</th>
-                  </tr>
-                </thead>
-                <tbody class="bg-teal-50">
-                  <tr
-                    v-for="appointment in upcomingAppointments"
-                    :key="appointment.id"
-                    class="border-b border-teal-200"
-                  >
-                    <td class="px-4 py-4 text-sm text-gray-900">{{ appointment.name }}</td>
-                    <td class="px-4 py-4 text-sm text-gray-700">{{ appointment.procedure }}</td>
-                    <td class="px-4 py-4 text-sm text-gray-700 whitespace-pre-line">{{ appointment.dateTime }}</td>
-                  </tr>
-                </tbody>
-              </table>
+          <!-- Patients Registered Card -->
+          <div class="bg-white rounded-xl shadow-lg p-4 hover:shadow-xl transition-shadow">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 bg-gradient-to-br from-teal-100 to-teal-200 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-3xl font-bold text-gray-900">{{ patientsRegistered }}</p>
+                <p class="text-xs text-gray-600 mt-1">Patients Registered</p>
+              </div>
             </div>
+          </div>
+
+          <!-- Pending Appointments Card -->
+          <div class="bg-white rounded-xl shadow-lg p-4 hover:shadow-xl transition-shadow">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 bg-gradient-to-br from-teal-100 to-teal-200 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-3xl font-bold text-gray-900">{{ pendingAppointments }}</p>
+                <p class="text-xs text-gray-600 mt-1">Pending Appointments</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appointments Chart -->
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-lg p-4">
+          <div class="flex justify-between items-center mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-gray-900">Appointments</h2>
+              <p class="text-xs text-gray-600 mt-1">Total Value: <span class="font-bold text-teal-700">{{ totalValue }}</span></p>
+            </div>
+            <select
+              v-model="selectedPeriod"
+              class="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white cursor-pointer"
+            >
+              <option v-for="period in periods" :key="period" :value="period">
+                {{ period }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Chart -->
+          <div class="relative h-64">
+            <canvas ref="barChartRef"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Section -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Appointment Status -->
+        <div class="bg-white rounded-xl shadow-lg p-4">
+          <h2 class="text-lg font-bold text-gray-900 mb-4">Appointment Status</h2>
+          
+          <div class="flex items-center gap-6">
+            <!-- Legend -->
+            <div class="flex-1 space-y-2">
+              <div
+                v-for="status in appointmentStatus"
+                :key="status.label"
+                class="flex items-center justify-between"
+              >
+                <div class="flex items-center gap-2">
+                  <div 
+                    class="w-2.5 h-2.5 rounded-full"
+                    :style="{ backgroundColor: status.color }"
+                  />
+                  <span class="text-xs text-gray-700 font-medium">{{ status.label }}</span>
+                </div>
+                <span class="text-xs font-bold text-gray-900">{{ status.percentage }}%</span>
+              </div>
+            </div>
+
+            <!-- Donut Chart -->
+            <div class="relative w-32 h-32">
+              <canvas ref="donutChartRef"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Upcoming Scheduled Appointments -->
+        <div class="bg-white rounded-xl shadow-lg p-4">
+          <h2 class="text-lg font-bold text-gray-900 mb-4">Upcoming Scheduled Appointments</h2>
+          
+          <div class="overflow-x-auto rounded-lg">
+            <table class="w-full">
+              <thead>
+                <tr class="bg-gradient-to-r from-teal-600 to-teal-700 text-white">
+                  <th class="px-3 py-2 text-left text-xs font-semibold">Name</th>
+                  <th class="px-3 py-2 text-left text-xs font-semibold">Procedure Type</th>
+                  <th class="px-3 py-2 text-left text-xs font-semibold">Date and Time</th>
+                </tr>
+              </thead>
+              <tbody class="bg-teal-50">
+                <tr
+                  v-for="appointment in upcomingAppointments"
+                  :key="appointment.id"
+                  class="border-b border-teal-100 hover:bg-teal-100 transition-colors"
+                >
+                  <td class="px-3 py-2 text-xs text-gray-900 font-medium">{{ appointment.name }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-700">{{ appointment.procedure }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-700">
+                    <div>{{ appointment.date }}</div>
+                    <div>{{ appointment.time }}</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
     </div>
-  </AdminLayout>
+  </div>
 </template>
 
 <style scoped>
