@@ -63,7 +63,6 @@ const openDetails = (appointment) => {
   showModal.value = true
 }
 
-// 🔄 Reschedule
 // 🔄Reschedule
 const openReschedule = () => {
   if (!selected.value) return
