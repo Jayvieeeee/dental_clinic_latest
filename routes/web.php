@@ -113,5 +113,9 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
+Route::middleware(['auth', 'staff'])->prefix('staff')->name('staff.')->group(function () {
+    Route::get('/home', fn() => Inertia::render('Staff/StaffHome'))->name('home');
+});
+
 
 require __DIR__.'/auth.php';

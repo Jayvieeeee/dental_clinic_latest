@@ -26,6 +26,7 @@ class ProfileController extends Controller
             return Inertia::render('Admin/Profile/Edit', [
                 'mustVerifyEmail' => $user instanceof MustVerifyEmail,
                 'status' => session('status'),
+                // User is passed explicitly for Admin/Staff routes
                 'user' => $user,
             ]);
         }
@@ -35,14 +36,18 @@ class ProfileController extends Controller
             return Inertia::render('Staff/Profile/Edit', [
                 'mustVerifyEmail' => $user instanceof MustVerifyEmail,
                 'status' => session('status'),
+                // User is passed explicitly for Admin/Staff routes
                 'user' => $user,
             ]);
         }
         
         // Regular customer profile
+        // FIX: Explicitly pass the user object to ensure data freshness
+        // and consistency after a successful update/redirect.
         return Inertia::render('Profile/Edit', [
             'mustVerifyEmail' => $user instanceof MustVerifyEmail,
             'status' => session('status'),
+            'currentUser' => $user, // Use a unique name for the explicitly passed user
         ]);
     }
 
@@ -67,6 +72,8 @@ class ProfileController extends Controller
 
         $user->fill($data);
         $user->save();
+        // Since we are redirecting back to the edit route, the new
+        // data will be correctly picked up by the fixed edit method above.
 
         // Redirect based on role
         if ($user->role === 'admin') {
